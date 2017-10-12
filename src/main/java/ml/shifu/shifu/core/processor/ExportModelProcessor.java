@@ -57,6 +57,8 @@ import org.dmg.pmml.PMML;
 import org.encog.ml.BasicML;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tensorflow.SavedModelBundle;
+import org.tensorflow.framework.SavedModel;
 
 /**
  * ExportModelProcessor class
@@ -74,6 +76,7 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
     public static final String ONE_BAGGING_MODEL = "bagging";
     public static final String ONE_BAGGING_PMML_MODEL = "baggingpmml";
     public static final String WOE_MAPPING = "woemapping";
+    public static final String TF_TO_SHIFU = "tf-2-shifu";
 
     public static final String IS_CONCISE = "IS_CONCISE";
     public static final String REQUEST_VARS = "REQUEST_VARS";
@@ -107,7 +110,9 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
         }
 
         String modelsPath = pathFinder.getModelsPath(SourceType.LOCAL);
-        if(type.equalsIgnoreCase(ONE_BAGGING_MODEL)) {
+        if(type.equals(TF_TO_SHIFU)) {
+            exportFromTfToEncog();
+        } else if(type.equalsIgnoreCase(ONE_BAGGING_MODEL)) {
             if(!"nn".equalsIgnoreCase(modelConfig.getAlgorithm())
                     && !CommonUtils.isTreeModel(modelConfig.getAlgorithm())) {
                 log.warn("Currently one bagging model is only supported in NN/GBT/RF algorithm.");
@@ -202,6 +207,13 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
         log.info("Done.");
 
         return status;
+    }
+
+    private void exportFromTfToEncog() {
+        String tfModel = "TODO";
+        SavedModelBundle bundle = SavedModelBundle.load(tfModel, "serve");
+        SavedModel savedModel = new SavedModel(bundle);
+        
     }
 
     private String rebinAndExportWoeMapping(ColumnConfig columnConfig) throws IOException {
