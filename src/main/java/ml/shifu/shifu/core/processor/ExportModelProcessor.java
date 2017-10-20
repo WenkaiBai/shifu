@@ -20,10 +20,23 @@ package ml.shifu.shifu.core.processor;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
+import java.nio.LongBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import ml.shifu.shifu.container.obj.ColumnConfig;
 import ml.shifu.shifu.container.obj.ModelTrainConf.ALGORITHM;
@@ -53,12 +66,37 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.dmg.pmml.Entity;
+import org.dmg.pmml.NeuralInputs;
+import org.dmg.pmml.NeuralLayer;
+import org.dmg.pmml.Neuron;
+import org.dmg.pmml.Output;
 import org.dmg.pmml.PMML;
 import org.encog.ml.BasicML;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tensorflow.DataType;
+import org.tensorflow.Graph;
+import org.tensorflow.Operation;
 import org.tensorflow.SavedModelBundle;
-import org.tensorflow.framework.SavedModel;
+import org.tensorflow.Session;
+import org.tensorflow.Session.Runner;
+import org.tensorflow.Tensor;
+import org.tensorflow.example.Feature;
+import org.tensorflow.framework.CollectionDef;
+import org.tensorflow.framework.GraphDef;
+import org.tensorflow.framework.MetaGraphDef;
+import org.tensorflow.framework.NodeDef;
+
+import com.google.common.base.Function;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.primitives.Booleans;
+import com.google.common.primitives.Doubles;
+import com.google.common.primitives.Floats;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 /**
  * ExportModelProcessor class
@@ -209,11 +247,470 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
         return status;
     }
 
-    private void exportFromTfToEncog() {
-        String tfModel = "TODO";
-        SavedModelBundle bundle = SavedModelBundle.load(tfModel, "serve");
-        SavedModel savedModel = new SavedModel(bundle);
-        
+    public static class TensorflowModel {
+
+        MetaGraphDef metaGraphDef;
+
+        GraphDef graphDef;
+
+        Map<String, NodeDef> nodeMap;
+
+        SavedModelBundle bundle;
+
+        private Map<String, Map<?, ?>> tableMap = new LinkedHashMap<>();
+
+        public TensorflowModel(SavedModelBundle model) {
+
+            byte[] metaGraphDefBytes = model.metaGraphDef();
+
+            try {
+                metaGraphDef = MetaGraphDef.parseFrom(metaGraphDefBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new RuntimeException(e);
+            }
+
+            GraphDef graphDef = metaGraphDef.getGraphDef();
+
+            nodeMap = new LinkedHashMap<>();
+
+            List<NodeDef> nodeDefs = graphDef.getNodeList();
+            for(NodeDef nodeDef: nodeDefs) {
+                nodeMap.put(nodeDef.getName(), nodeDef);
+            }
+
+            initializeTables();
+        }
+
+        private void initializeTables() {
+            Collection<String> tableInitializerNames = Collections.emptyList();
+
+            try {
+                CollectionDef collectionDef = getCollectionDef("table_initializer");
+
+                CollectionDef.NodeList nodeList = collectionDef.getNodeList();
+
+                tableInitializerNames = nodeList.getValueList();
+            } catch (IllegalArgumentException iae) {
+                // Ignored
+            }
+
+            for(String tableInitializerName: tableInitializerNames) {
+                NodeDef tableInitializer = getNodeDef(tableInitializerName);
+
+                String name = tableInitializer.getInput(0);
+
+                List<?> keys;
+                List<?> values;
+
+                try (Tensor tensor = run(tableInitializer.getInput(1))) {
+                    keys = getValues(tensor);
+                } // End try
+
+                try (Tensor tensor = run(tableInitializer.getInput(2))) {
+                    values = getValues(tensor);
+                }
+
+                Map<Object, Object> table = new LinkedHashMap<>();
+
+                if(keys.size() != values.size()) {
+                    throw new IllegalArgumentException();
+                }
+
+                for(int i = 0; i < keys.size(); i++) {
+                    table.put(keys.get(i), values.get(i));
+                }
+
+                putTable(name, table);
+            }
+        }
+
+        public void close() {
+            SavedModelBundle bundle = getBundle();
+            bundle.close();
+        }
+
+        public Tensor run(String name) {
+            Session session = getSession();
+
+            Runner runner = (session.runner()).fetch(name);
+
+            List<Tensor> tensors = runner.run();
+
+            return Iterables.getOnlyElement(tensors);
+        }
+
+        public Operation getOperation(String name) {
+            Graph graph = getGraph();
+
+            return graph.operation(name);
+        }
+
+        public NodeDef getNodeDef(String name) {
+            Map<String, NodeDef> nodeMap = this.nodeMap;
+
+            int colon = name.indexOf(':');
+
+            NodeDef nodeDef = nodeMap.get(colon > -1 ? name.substring(0, colon) : name);
+            if(nodeDef == null) {
+                throw new IllegalArgumentException(name);
+            }
+
+            return nodeDef;
+        }
+
+        public CollectionDef getCollectionDef(String key) {
+            MetaGraphDef metaGraphDef = this.metaGraphDef;
+
+            Map<String, CollectionDef> collectionMap = metaGraphDef.getCollectionDefMap();
+
+            CollectionDef collectionDef = collectionMap.get(key);
+            if(collectionDef == null) {
+                throw new IllegalArgumentException(key);
+            }
+
+            return collectionDef;
+        }
+
+        public NodeDef getOnlyInput(String name, String... ops) {
+            Iterable<NodeDef> inputs = getInputs(name, ops);
+
+            return Iterables.getOnlyElement(inputs);
+        }
+
+        public Iterable<NodeDef> getInputs(String name, String... ops) {
+            NodeDef nodeDef = getNodeDef(name);
+
+            Collection<Trail> trails = new LinkedHashSet<>();
+
+            collectInputs(new ArrayDeque<NodeDef>(), nodeDef, new HashSet<>(Arrays.asList(ops)), trails);
+
+            Function<Trail, NodeDef> function = new Function<Trail, NodeDef>() {
+                @Override
+                public NodeDef apply(Trail trail) {
+                    return trail.getNodeDef();
+                }
+            };
+
+            Collection<NodeDef> inputs = new LinkedHashSet<>();
+
+            Iterables.addAll(inputs, Iterables.transform(trails, function));
+
+            return inputs;
+        }
+
+        private void collectInputs(Deque<NodeDef> parentNodeDefs, NodeDef nodeDef, Set<String> ops,
+                Collection<Trail> trails) {
+
+            if(ops.contains(nodeDef.getOp())) {
+                trails.add(new Trail(parentNodeDefs, nodeDef));
+            }
+
+            List<String> inputNames = nodeDef.getInputList();
+
+            for(String inputName: inputNames) {
+                NodeDef inputNodeDef = getNodeDef(inputName);
+
+                parentNodeDefs.addFirst(inputNodeDef);
+
+                collectInputs(parentNodeDefs, inputNodeDef, ops, trails);
+
+                parentNodeDefs.removeFirst();
+            }
+        }
+
+        static class Trail extends ArrayList<NodeDef> {
+
+            private static final long serialVersionUID = -2772442671246820463L;
+
+            Trail(Deque<NodeDef> parentNodeDefs, NodeDef nodeDef) {
+                super(parentNodeDefs);
+                add(nodeDef);
+            }
+
+            public NodeDef getNodeDef() {
+                return get(size() - 1);
+            }
+        }
+
+        public Map<?, ?> getTable(String name) {
+            Map<?, ?> table = this.tableMap.get(name);
+
+            if(table == null) {
+                throw new IllegalArgumentException(name);
+            }
+
+            return table;
+        }
+
+        private void putTable(String name, Map<Object, Object> table) {
+            this.tableMap.put(name, table);
+        }
+
+        public Session getSession() {
+            SavedModelBundle bundle = getBundle();
+
+            return bundle.session();
+        }
+
+        public Graph getGraph() {
+            SavedModelBundle bundle = getBundle();
+
+            return bundle.graph();
+        }
+
+        public SavedModelBundle getBundle() {
+            return this.bundle;
+        }
+
+        //
+        // private void setBundle(SavedModelBundle bundle){
+        // this.bundle = bundle;
+        // }
+        //
+        // public MetaGraphDef getMetaGraphDef(){
+        // return this.metaGraphDef;
+        // }
+        //
+        // private void setMetaGraphDef(MetaGraphDef metaGraphDef){
+        // this.metaGraphDef = metaGraphDef;
+        // }
+        //
+        // public Map<String, NodeDef> getNodeMap(){
+        // return this.nodeMap;
+        // }
+        //
+        // private void setNodeMap(Map<String, NodeDef> nodeMap){
+        // this.nodeMap = nodeMap;
+        // }
+
+        static public List<?> getValues(Tensor tensor) {
+            DataType dataType = tensor.dataType();
+
+            switch(dataType) {
+                case FLOAT:
+                    return Floats.asList(toFloatArray(tensor));
+                case DOUBLE:
+                    return Doubles.asList(toDoubleArray(tensor));
+                case INT32:
+                    return Ints.asList(toIntArray(tensor));
+                case INT64:
+                    return Longs.asList(toLongArray(tensor));
+                case STRING:
+                    return Arrays.asList(toStringArray(tensor));
+                case BOOL:
+                    return Booleans.asList(toBooleanArray(tensor));
+                default:
+                    throw new IllegalArgumentException();
+            }
+        }
+
+        static public float toFloatScalar(Tensor tensor) {
+
+            try {
+                return tensor.floatValue();
+            } catch (Exception e) {
+                float[] values = toFloatArray(tensor);
+
+                if(values.length != 1) {
+                    throw new IllegalArgumentException("Expected 1-element array, got " + Arrays.toString(values));
+                }
+
+                return values[0];
+            }
+        }
+
+        static public float[] toFloatArray(Tensor tensor) {
+            FloatBuffer floatBuffer = FloatBuffer.allocate(tensor.numElements());
+            tensor.writeTo(floatBuffer);
+            return floatBuffer.array();
+        }
+
+        static public double[] toDoubleArray(Tensor tensor) {
+            DoubleBuffer doubleBuffer = DoubleBuffer.allocate(tensor.numElements());
+            tensor.writeTo(doubleBuffer);
+            return doubleBuffer.array();
+        }
+
+        static public int[] toIntArray(Tensor tensor) {
+            IntBuffer intBuffer = IntBuffer.allocate(tensor.numElements());
+
+            tensor.writeTo(intBuffer);
+
+            return intBuffer.array();
+        }
+
+        static public long[] toLongArray(Tensor tensor) {
+            LongBuffer longBuffer = LongBuffer.allocate(tensor.numElements());
+            tensor.writeTo(longBuffer);
+            return longBuffer.array();
+        }
+
+        static public String[] toStringArray(Tensor tensor) {
+            ByteBuffer byteBuffer = ByteBuffer.allocate(tensor.numBytes());
+            tensor.writeTo(byteBuffer);
+            byteBuffer.position(tensor.numElements() * 8);
+            String[] result = new String[tensor.numElements()];
+
+            for(int i = 0; i < result.length; i++) {
+                int length = byteBuffer.get();
+                byte[] buffer = new byte[length];
+                byteBuffer.get(buffer);
+                result[i] = new String(buffer);
+            }
+
+            return result;
+        }
+
+        static public boolean[] toBooleanArray(Tensor tensor) {
+            ByteBuffer byteBuffer = ByteBuffer.allocate(tensor.numElements());
+
+            tensor.writeTo(byteBuffer);
+
+            boolean[] result = new boolean[tensor.numElements()];
+
+            for(int i = 0; i < result.length; i++) {
+                result[i] = (byteBuffer.get(i) != 0);
+            }
+
+            return result;
+        }
+
+    }
+
+    private void exportFromTfToEncog() throws InvalidProtocolBufferException {
+        String tfModelPath = "TODO";
+        String head = "TODO";
+
+        SavedModelBundle bundle = null;
+        try {
+            bundle = SavedModelBundle.load(tfModelPath, "serve");
+            TensorflowModel tfModel = new TensorflowModel(bundle);
+            List<NodeDef> biasAdds = Lists.newArrayList(tfModel.getInputs(head, "BiasAdd"));
+
+            biasAdds = Lists.reverse(biasAdds);
+
+            List<? extends Entity> entities;
+
+            {
+                NodeDef biasAdd = biasAdds.get(0);
+
+                NodeDef matMul = tfModel.getNodeDef(biasAdd.getInput(0));
+                if(!("MatMul").equals(matMul.getOp())) {
+                    throw new IllegalArgumentException();
+                }
+
+                NodeDef concat = tfModel.getNodeDef(matMul.getInput(0));
+                if(!("ConcatV2").equals(concat.getOp())) {
+                    throw new IllegalArgumentException();
+                }
+
+                List<Feature> features = new ArrayList<>();
+
+                List<String> inputNames = concat.getInputList();
+                for(int i = 0; i < inputNames.size() - 1; i++) {
+                    String inputName = inputNames.get(i);
+
+                    NodeDef term = tfModel.getNodeDef(inputName);
+
+                    // "real_valued_column"
+                    if(("Cast").equals(term.getOp()) || ("Placeholder").equals(term.getOp())) {
+                        NodeDef placeholder = term;
+                        Feature feature = encoder.createContinuousFeature(savedModel, placeholder);
+                        features.add(feature);
+                    } else
+
+                    // "one_hot_column(sparse_column_with_keys)"
+                    if(("Sum").equals(term.getOp())) {
+                        NodeDef oneHot = tfModel.getOnlyInput(term.getInput(0), "OneHot");
+
+                        NodeDef placeholder = tfModel.getOnlyInput(oneHot.getInput(0), "Placeholder");
+                        NodeDef findTable = tfModel.getOnlyInput(oneHot.getInput(0), "LookupTableFind");
+
+                        Map<?, ?> table = tfModel.getTable(findTable.getInput(0));
+
+                        List<String> categories = (List) new ArrayList<>(table.keySet());
+
+                        List<BinaryFeature> binaryFeatures = encoder.createBinaryFeatures(savedModel, placeholder,
+                                categories);
+
+                        features.addAll(binaryFeatures);
+                    } else
+
+                    {
+                        throw new IllegalArgumentException(term.getName());
+                    }
+                }
+
+                NeuralInputs neuralInputs = NeuralNetworkUtil.createNeuralInputs(features, DataType.FLOAT);
+
+                neuralNetwork.setNeuralInputs(neuralInputs);
+
+                entities = neuralInputs.getNeuralInputs();
+            }
+
+            for(int i = 0; i < biasAdds.size(); i++) {
+                NodeDef biasAdd = biasAdds.get(i);
+
+                NodeDef matMul = savedModel.getNodeDef(biasAdd.getInput(0));
+                if(!("MatMul").equals(matMul.getOp())) {
+                    throw new IllegalArgumentException();
+                }
+
+                int count;
+
+                {
+                    Operation operation = savedModel.getOperation(matMul.getName());
+
+                    Output output = operation.output(0);
+
+                    long[] shape = ShapeUtil.toArray(output.shape());
+                    if(shape.length != 2 || shape[0] != -1) {
+                        throw new IllegalArgumentException();
+                    }
+
+                    count = (int) shape[1];
+                }
+
+                NodeDef weights = savedModel.getOnlyInput(matMul.getInput(1), "VariableV2");
+
+                float[] weightValues;
+
+                try (Tensor tensor = savedModel.run(weights.getName())) {
+                    weightValues = TensorUtil.toFloatArray(tensor);
+                }
+
+                NodeDef bias = savedModel.getOnlyInput(biasAdd.getInput(1), "VariableV2");
+
+                float[] biasValues;
+
+                try (Tensor tensor = savedModel.run(bias.getName())) {
+                    biasValues = TensorUtil.toFloatArray(tensor);
+                }
+
+                NeuralLayer neuralLayer = new NeuralLayer();
+
+                for(int j = 0; j < count; j++) {
+                    List<Float> entityWeights = CMatrixUtil.getColumn(Floats.asList(weightValues), entities.size(),
+                            count, j);
+
+                    Neuron neuron = NeuralNetworkUtil.createNeuron(entities, ValueUtil.floatsToDoubles(entityWeights),
+                            ValueUtil.floatToDouble(biasValues[j])).setId(
+                            String.valueOf(i + 1) + "/" + String.valueOf(j + 1));
+
+                    neuralLayer.addNeurons(neuron);
+                }
+
+                neuralNetwork.addNeuralLayers(neuralLayer);
+
+                entities = neuralLayer.getNeurons();
+            }
+
+        } finally {
+            if(bundle != null) {
+                bundle.close();
+            }
+        }
+
     }
 
     private String rebinAndExportWoeMapping(ColumnConfig columnConfig) throws IOException {
