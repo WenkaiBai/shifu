@@ -75,6 +75,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.dmg.pmml.PMML;
 import org.encog.engine.network.activation.ActivationLinear;
+import org.encog.engine.network.activation.ActivationSigmoid;
 import org.encog.ml.BasicML;
 import org.encog.neural.networks.layers.BasicLayer;
 import org.encog.neural.networks.structure.NeuralStructure;
@@ -158,7 +159,7 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
         String modelsPath = pathFinder.getModelsPath(SourceType.LOCAL);
         if(type.equals(TF_TO_SHIFU)) {
             TFNNModel tfNNModel = createFromTfToEncog(new Path(modelsPath, "DNNRegressionAuto").toString(),
-                    REGRESSION_HEAD);
+                    REGRESSION_HEAD, "serve");
             Configuration conf = new Configuration();
 
             Path output = new Path(modelsPath, "model.tfnn");
@@ -271,6 +272,10 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
 
         SavedModelBundle bundle;
 
+        Graph graph;
+
+        Session session;
+
         private Map<String, Map<?, ?>> tableMap = new LinkedHashMap<>();
 
         public TensorflowModel(SavedModelBundle model) {
@@ -278,6 +283,29 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
 
             byte[] metaGraphDefBytes = model.metaGraphDef();
 
+            try {
+                metaGraphDef = MetaGraphDef.parseFrom(metaGraphDefBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new RuntimeException(e);
+            }
+
+            GraphDef graphDef = metaGraphDef.getGraphDef();
+
+            nodeMap = new LinkedHashMap<>();
+
+            List<NodeDef> nodeDefs = graphDef.getNodeList();
+            for(NodeDef nodeDef: nodeDefs) {
+                nodeMap.put(nodeDef.getName(), nodeDef);
+            }
+
+            initializeTables();
+        }
+
+        public TensorflowModel(byte[] metaGraphDefBytes) {
+            Graph graph = new Graph();
+            graph.importGraphDef(metaGraphDefBytes);
+            this.graph = graph;
+            this.session = new Session(graph);
             try {
                 metaGraphDef = MetaGraphDef.parseFrom(metaGraphDefBytes);
             } catch (InvalidProtocolBufferException e) {
@@ -341,11 +369,18 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
 
         public void close() {
             SavedModelBundle bundle = getBundle();
-            bundle.close();
+            if(bundle != null) {
+                bundle.close();
+            }
         }
 
         public Tensor run(String name) {
-            Session session = getSession();
+            Session session = null;
+            if(bundle != null) {
+                session = getSession();
+            } else {
+                session = this.session;
+            }
 
             Runner runner = (session.runner()).fetch(name);
 
@@ -390,6 +425,40 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
             Iterable<NodeDef> inputs = getInputs(name, ops);
 
             return Iterables.getOnlyElement(inputs);
+        }
+
+        public NodeDef getNodeDefWithInput(String input) {
+            Map<String, NodeDef> nodeMap = this.nodeMap;
+
+            for(Map.Entry<String, NodeDef> entry: nodeMap.entrySet()) {
+                NodeDef nodeDef = entry.getValue();
+                int cnt = nodeDef.getInputCount();
+                for(int i = 0; i < cnt; i++) {
+                    String inputName = nodeDef.getInput(i);
+                    if(inputName.equals(input)) {
+                        return nodeDef;
+                    }
+                }
+            }
+
+            throw new IllegalArgumentException("No node with input " + input);
+        }
+
+        public NodeDef getNodeDef(String input, String ops) {
+            Map<String, NodeDef> nodeMap = this.nodeMap;
+
+            for(Map.Entry<String, NodeDef> entry: nodeMap.entrySet()) {
+                NodeDef nodeDef = entry.getValue();
+                int cnt = nodeDef.getInputCount();
+                for(int i = 0; i < cnt; i++) {
+                    String inputName = nodeDef.getInput(i);
+                    if(inputName.equals(input) && nodeDef.getOp().equals(ops)) {
+                        return nodeDef;
+                    }
+                }
+            }
+
+            throw new IllegalArgumentException("No node with input " + input + " and op " + ops);
         }
 
         public Iterable<NodeDef> getInputs(String name, String... ops) {
@@ -464,13 +533,22 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
         public Session getSession() {
             SavedModelBundle bundle = getBundle();
 
-            return bundle.session();
+            if(bundle != null) {
+                return bundle.session();
+            } else {
+                return this.session;
+            }
         }
 
         public Graph getGraph() {
             SavedModelBundle bundle = getBundle();
 
-            return bundle.graph();
+            if(bundle != null) {
+                return bundle.graph();
+            } else {
+                return this.graph;
+            }
+
         }
 
         public SavedModelBundle getBundle() {
@@ -592,13 +670,155 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
 
     }
 
-    public static TFNNModel createFromTfToEncog(String tfModelPath, String head) throws InvalidProtocolBufferException {
+    public static TFNNModel createFromTfToEncog(String tfModelPath, String head, String tag) throws IOException {
         SavedModelBundle bundle = null;
 
         final BasicFloatNetwork network = new BasicFloatNetwork();
         try {
-            bundle = SavedModelBundle.load(tfModelPath, "serve");
+            bundle = SavedModelBundle.load(tfModelPath, tag);
             TensorflowModel tfModel = new TensorflowModel(bundle);
+
+            // byte[] bytes = FileUtils.readFileToByteArray(new File(tfModelPath));
+            // TensorflowModel tfModel = new TensorflowModel(bytes);
+            List<NodeDef> biasAdds = Lists.newArrayList(tfModel.getInputs(head, "BiasAdd"));
+
+            biasAdds = Lists.reverse(biasAdds);
+
+            SortedMap<Integer, String> columnIndexNameMap = new TreeMap<Integer, String>();
+            Map<Integer, TFNNModel.DataType> columnTypeMap = new HashMap<Integer, TFNNModel.DataType>();
+            Map<Integer, List<String>> oneHotCategoryMap = new HashMap<Integer, List<String>>();
+
+            int in;
+            {
+                NodeDef biasAdd = biasAdds.get(0);
+
+                NodeDef matMul = tfModel.getNodeDef(biasAdd.getInput(0));
+                NodeDef input = tfModel.getNodeDef(matMul.getInput(0));
+
+                {
+                    Operation operation = tfModel.getOperation(input.getName());
+
+                    Output output = operation.output(0);
+
+                    long[] shape = toArray(output.shape());
+                    if(shape.length != 2 || shape[0] != -1) {
+                        throw new IllegalArgumentException();
+                    }
+                    in = (int) shape[1];
+                }
+            }
+
+            network.addLayer(new BasicLayer(new ActivationLinear(), true, in));
+
+            for(int i = 0; i < biasAdds.size(); i++) {
+                NodeDef biasAdd = biasAdds.get(i);
+
+                NodeDef matMul = tfModel.getNodeDef(biasAdd.getInput(0));
+                if(!("MatMul").equals(matMul.getOp())) {
+                    throw new IllegalArgumentException();
+                }
+
+                int count;
+
+                {
+                    Operation operation = tfModel.getOperation(matMul.getName());
+
+                    Output output = operation.output(0);
+
+                    long[] shape = toArray(output.shape());
+                    if(shape.length != 2 || shape[0] != -1) {
+                        throw new IllegalArgumentException();
+                    }
+
+                    count = (int) shape[1];
+                }
+
+                NodeDef activiationOps = tfModel.getNodeDefWithInput(biasAdd.getName());
+
+                if(activiationOps.getOp().equalsIgnoreCase("sigmoid")) {
+                    network.addLayer(new BasicLayer(new ActivationSigmoid(), i != biasAdds.size() - 1, count));
+                } else {
+                    network.addLayer(new BasicLayer(new ActivationReLU(), i != biasAdds.size() - 1, count));
+                }
+            }
+
+            NeuralStructure structure = network.getStructure();
+            if(network.getStructure() instanceof FloatNeuralStructure) {
+                ((FloatNeuralStructure) structure).finalizeStruct();
+            } else {
+                structure.finalizeStructure();
+            }
+
+            int lastCount = in;
+            for(int i = 0; i < biasAdds.size(); i++) {
+                NodeDef biasAdd = biasAdds.get(i);
+
+                NodeDef matMul = tfModel.getNodeDef(biasAdd.getInput(0));
+                if(!("MatMul").equals(matMul.getOp())) {
+                    throw new IllegalArgumentException();
+                }
+
+                int count;
+
+                {
+                    Operation operation = tfModel.getOperation(matMul.getName());
+
+                    Output output = operation.output(0);
+
+                    long[] shape = toArray(output.shape());
+                    if(shape.length != 2 || shape[0] != -1) {
+                        throw new IllegalArgumentException();
+                    }
+
+                    count = (int) shape[1];
+                }
+
+                NodeDef weights = tfModel.getOnlyInput(matMul.getInput(1), "VariableV2");
+
+                float[] weightValues;
+
+                try (Tensor tensor = tfModel.run(weights.getName())) {
+                    weightValues = toFloatArray(tensor);
+                }
+
+                NodeDef bias = tfModel.getOnlyInput(biasAdd.getInput(1), "VariableV2");
+
+                float[] biasValues;
+                try (Tensor tensor = tfModel.run(bias.getName())) {
+                    biasValues = toFloatArray(tensor);
+                }
+
+                for(int j = 0; j < count; j++) {
+                    List<Float> entityWeights = getColumn(Floats.asList(weightValues), lastCount, count, j);
+                    for(int k = 0; k < entityWeights.size(); k++) {
+                        network.setWeight(i, k, j, (double) (entityWeights.get(k)));
+                    }
+                    // set bias
+                    network.setWeight(i, entityWeights.size(), j, (double) (biasValues[j]));
+                }
+
+                lastCount = count;
+            }
+
+            return new TFNNModel(network, columnIndexNameMap, columnTypeMap, oneHotCategoryMap);
+        } finally {
+            if(bundle != null) {
+                bundle.close();
+            }
+        }
+
+    }
+
+    public static TFNNModel createFromTfToEncogBak(String tfModelPath, String head, String tag) throws IOException {
+        SavedModelBundle bundle = null;
+
+        final BasicFloatNetwork network = new BasicFloatNetwork();
+        try {
+            bundle = SavedModelBundle.load(tfModelPath, tag);
+            TensorflowModel tfModel = new TensorflowModel(bundle);
+
+            // byte[] bytes = FileUtils.readFileToByteArray(new File(tfModelPath));
+            // TensorflowModel tfModel = new TensorflowModel(bytes);
             List<NodeDef> biasAdds = Lists.newArrayList(tfModel.getInputs(head, "BiasAdd"));
 
             biasAdds = Lists.reverse(biasAdds);
@@ -630,7 +850,7 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
                     // "real_valued_column"
                     if(("Cast").equals(term.getOp()) || ("Placeholder").equals(term.getOp())) {
                         NodeDef placeholder = term;
-                        if(("Cast").equals(placeholder.getOp())){
+                        if(("Cast").equals(placeholder.getOp())) {
                             placeholder = tfModel.getNodeDef(placeholder.getInput(0));
                         }
                         columnIndexNameMap.put(i, placeholder.getName());
@@ -739,7 +959,6 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
 
                 for(int j = 0; j < count; j++) {
                     List<Float> entityWeights = getColumn(Floats.asList(weightValues), lastCount, count, j);
-                    System.out.println(j + " " + entityWeights.size());
                     for(int k = 0; k < entityWeights.size(); k++) {
                         network.setWeight(i, k, j, (double) (entityWeights.get(k)));
                     }
@@ -756,7 +975,6 @@ public class ExportModelProcessor extends BasicModelProcessor implements Process
                 bundle.close();
             }
         }
-
     }
 
     static public <E> List<E> getColumn(List<E> values, int rows, int columns, int index) {

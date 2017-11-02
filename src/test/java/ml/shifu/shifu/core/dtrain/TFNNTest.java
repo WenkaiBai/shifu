@@ -41,61 +41,58 @@ import ml.shifu.shifu.util.CommonUtils;
  */
 public class TFNNTest {
 
-	@Test
-	public void validate() throws IOException {
-		System.out.println(TensorFlow.class.getClassLoader().getResourceAsStream("ml/shifu/shifu/ShifuCLI.class"));
-		System.out.println(TensorFlow.class.getClassLoader()
-				.getResourceAsStream("org/tensorflow/native/windows-x86/tensorflow_jni.dll"));
+    @Test
+    public void validate() throws IOException {
+        System.out.println(Arrays.toString(((URLClassLoader) TensorFlow.class.getClassLoader()).getURLs()));
+        System.setProperty("hadoop.home.dir", "D:\\Programs\\hadoop-2.6.5");
 
-		System.out.println(Arrays.toString(((URLClassLoader) TensorFlow.class.getClassLoader()).getURLs()));
-		System.setProperty("hadoop.home.dir", "D:\\Programs\\hadoop-2.6.5");
+        TFNNModel tfNNModel = ExportModelProcessor.createFromTfToEncogBak(new Path(
+                "D:\\workspace\\eclipse-shifu-new\\shifu\\src\\test\\resources\\tfmodel", "DNNRegressionAuto")
+                .toString(), ExportModelProcessor.REGRESSION_HEAD, "serve");
+        Configuration conf = new Configuration();
 
-		TFNNModel tfNNModel = ExportModelProcessor.createFromTfToEncog(
-				new Path("D:\\workspace\\eclipse-shifu-new\\shifu\\src\\test\\resources\\tfmodel", "DNNRegressionAuto").toString(), ExportModelProcessor.REGRESSION_HEAD);
-		Configuration conf = new Configuration();
+        Path output = new Path(".", "model.tfnn");
+        TFNNModel.save(tfNNModel.getColumnIndexNameMap(), tfNNModel.getColumnTypeMap(),
+                tfNNModel.getOneHotCategoryMap(), tfNNModel.getBasicNetwork(), FileSystem.getLocal(conf), output);
+    }
 
-		Path output = new Path(".", "model.tfnn");
-		TFNNModel.save(tfNNModel.getColumnIndexNameMap(), tfNNModel.getColumnTypeMap(),
-				tfNNModel.getOneHotCategoryMap(), tfNNModel.getBasicNetwork(), FileSystem.getLocal(conf), output);
-	}
+    @Test
+    public void testModel() throws IOException {
+        String modelPath = "src/test/resources/tfmodel/model.tfnn";
+        FileInputStream fi = null;
+        TFNNModel tfNNModel;
+        try {
+            fi = new FileInputStream(modelPath);
+            // long start = System.nanoTime();
+            tfNNModel = TFNNModel.loadFromStream(fi);
+        } finally {
+            fi.close();
+        }
+        List<String> lines = FileUtils.readLines(new File("src/test/resources/tfmodel/Auto.csv"));
 
-	@Test
-	public void testModel() throws IOException {
-		String modelPath = "src/test/resources/tfmodel/model.tfnn";
-		FileInputStream fi = null;
-		TFNNModel tfNNModel;
-		try {
-			fi = new FileInputStream(modelPath);
-			// long start = System.nanoTime();
-			tfNNModel = TFNNModel.loadFromStream(fi);
-		} finally {
-			fi.close();
-		}
-		List<String> lines = FileUtils.readLines(new File("src/test/resources/tfmodel/Auto.csv"));
+        if(lines.size() <= 1) {
+            return;
+        }
+        String[] headers = CommonUtils.split(lines.get(0), ",");
+        // score with format <String, String>
+        for(int i = 1; i < lines.size(); i++) {
+            long start = System.currentTimeMillis();
+            Map<String, String> map = new HashMap<String, String>();
+            Map<String, Object> mapObj = new HashMap<String, Object>();
 
-		if (lines.size() <= 1) {
-			return;
-		}
-		String[] headers = CommonUtils.split(lines.get(0), ",");
-		// score with format <String, String>
-		for (int i = 1; i < lines.size(); i++) {
-			Map<String, String> map = new HashMap<String, String>();
-			Map<String, Object> mapObj = new HashMap<String, Object>();
+            String[] data = CommonUtils.split(lines.get(i), ",");;
+            // System.out.println("data len is " + data.length);
+            if(data.length != headers.length) {
+                System.out.println("One invalid input data");
+                break;
+            }
+            for(int j = 0; j < headers.length; j++) {
+                map.put(headers[j], data[j]);
+                mapObj.put(headers[j], data[j]);
+            }
+            double[] scores = tfNNModel.compute(mapObj);
+            System.out.println((System.currentTimeMillis() - start) + "ms :" + Arrays.toString(scores));
+        }
 
-			String[] data = CommonUtils.split(lines.get(i), ",");
-			;
-			// System.out.println("data len is " + data.length);
-			if (data.length != headers.length) {
-				System.out.println("One invalid input data");
-				break;
-			}
-			for (int j = 0; j < headers.length; j++) {
-				map.put(headers[j], data[j]);
-				mapObj.put(headers[j], data[j]);
-			}
-			double[] scores = tfNNModel.compute(mapObj);
-			System.out.println(Arrays.toString(scores));
-		}
-
-	}
+    }
 }
