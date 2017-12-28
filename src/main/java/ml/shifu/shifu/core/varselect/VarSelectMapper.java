@@ -23,19 +23,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapreduce.Mapper;
-import org.encog.ml.MLRegression;
-import org.encog.ml.data.basic.BasicMLData;
-import org.encog.persist.PersistorRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Splitter;
-
 import ml.shifu.guagua.util.MemoryUtils;
 import ml.shifu.guagua.util.NumberFormatUtils;
 import ml.shifu.shifu.container.obj.ColumnConfig;
@@ -43,13 +30,27 @@ import ml.shifu.shifu.container.obj.ModelConfig;
 import ml.shifu.shifu.container.obj.RawSourceData.SourceType;
 import ml.shifu.shifu.core.dtrain.CommonConstants;
 import ml.shifu.shifu.core.dtrain.DTrainUtils;
+import ml.shifu.shifu.core.dtrain.dataset.BasicFloatMLData;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
 import ml.shifu.shifu.core.dtrain.dataset.CacheBasicFloatNetwork;
 import ml.shifu.shifu.core.dtrain.dataset.CacheFlatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatFlatNetwork;
 import ml.shifu.shifu.core.dtrain.dataset.PersistBasicFloatNetwork;
 import ml.shifu.shifu.fs.ShifuFileUtils;
 import ml.shifu.shifu.util.CommonUtils;
 import ml.shifu.shifu.util.Constants;
+
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.encog.ml.MLRegression;
+import org.encog.persist.PersistorRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.base.Splitter;
 
 /**
  * Mapper implementation to accumulate MSE value when remove one column.
@@ -103,13 +104,13 @@ public class VarSelectMapper extends Mapper<LongWritable, Text, LongWritable, Co
      * Inputs columns for each record. To save new objects in
      * {@link #map(LongWritable, Text, org.apache.hadoop.mapreduce.Mapper.Context)}.
      */
-    private double[] inputs;
+    private float[] inputs;
 
     /**
      * Outputs columns for each record. To save new objects in
      * {@link #map(LongWritable, Text, org.apache.hadoop.mapreduce.Mapper.Context)}.
      */
-    private double[] outputs;
+    private float[] outputs;
 
     /**
      * Column indexes for each record. To save new objects in
@@ -120,7 +121,7 @@ public class VarSelectMapper extends Mapper<LongWritable, Text, LongWritable, Co
     /**
      * Input MLData instance to save new.
      */
-    private BasicMLData inputsMLData;
+    private BasicFloatMLData inputsMLData;
 
     /**
      * Prevent too many new objects for output key.
@@ -208,11 +209,11 @@ public class VarSelectMapper extends Mapper<LongWritable, Text, LongWritable, Co
         flat.setLayerFeedCounts(network.getFlat().getLayerFeedCounts());
         flat.setLayerContextCount(network.getFlat().getLayerContextCount());
         flat.setLayerIndex(network.getFlat().getLayerIndex());
-        flat.setLayerOutput(network.getFlat().getLayerOutput());
-        flat.setLayerSums(network.getFlat().getLayerSums());
+        flat.setFloatLayerOutput(((FloatFlatNetwork) (network.getFlat())).getFloatLayerOutput());
+        flat.setFloatLayerSums(((FloatFlatNetwork) (network.getFlat())).getFloatLayerSums());
         flat.setOutputCount(network.getFlat().getOutputCount());
         flat.setWeightIndex(network.getFlat().getWeightIndex());
-        flat.setWeights(network.getFlat().getWeights());
+        flat.setFloatWeights(((FloatFlatNetwork) (network.getFlat())).getFloatWeights());
         flat.setBiasActivation(network.getFlat().getBiasActivation());
         flat.setActivationFunctions(network.getFlat().getActivationFunctions());
         result.setFeatureSet(network.getFeatureSet());
@@ -239,17 +240,17 @@ public class VarSelectMapper extends Mapper<LongWritable, Text, LongWritable, Co
                 columnConfigList);
         this.inputNodeCount = inputOutputIndex[0] == 0 ? inputOutputIndex[2] : inputOutputIndex[0];
         if(model instanceof BasicFloatNetwork) {
-            this.inputs = new double[((BasicFloatNetwork) model).getFeatureSet().size()];
+            this.inputs = new float[((BasicFloatNetwork) model).getFeatureSet().size()];
             this.featureSet = ((BasicFloatNetwork) model).getFeatureSet();
         } else {
-            this.inputs = new double[this.inputNodeCount];
+            this.inputs = new float[this.inputNodeCount];
         }
 
         boolean isAfterVarSelect = (inputOutputIndex[0] != 0);
         // cache all feature list for sampling features
         if(this.featureSet == null || this.featureSet.size() == 0) {
             this.featureSet = new HashSet<Integer>(CommonUtils.getAllFeatureList(columnConfigList, isAfterVarSelect));
-            this.inputs = new double[this.featureSet.size()];
+            this.inputs = new float[this.featureSet.size()];
         }
 
         if(inputs.length != this.inputNodeCount) {
@@ -257,9 +258,9 @@ public class VarSelectMapper extends Mapper<LongWritable, Text, LongWritable, Co
                     + " is inconsistent with input size " + this.inputNodeCount + ".");
         }
 
-        this.outputs = new double[inputOutputIndex[1]];
+        this.outputs = new float[inputOutputIndex[1]];
         this.columnIndexes = new long[this.inputs.length];
-        this.inputsMLData = new BasicMLData(this.inputs.length);
+        this.inputsMLData = new BasicFloatMLData(this.inputs.length);
         this.outputKey = new LongWritable();
         LOG.info("Filter by is {}", filterBy);
     }
@@ -269,16 +270,16 @@ public class VarSelectMapper extends Mapper<LongWritable, Text, LongWritable, Co
         recordCount += 1L;
         int index = 0, inputsIndex = 0, outputsIndex = 0;
         for(String input: DEFAULT_SPLITTER.split(value.toString())) {
-            double doubleValue = NumberFormatUtils.getDouble(input.trim(), 0.0d);
+            float floatValue = NumberFormatUtils.getFloat(input.trim(), 0f);
             if(index == columnConfigList.size()) {
                 break;
             } else {
                 ColumnConfig columnConfig = columnConfigList.get(index);
                 if(columnConfig != null && columnConfig.isTarget()) {
-                    this.outputs[outputsIndex++] = doubleValue;
+                    this.outputs[outputsIndex++] = floatValue;
                 } else {
                     if(this.featureSet.contains(columnConfig.getColumnNum())) {
-                        inputs[inputsIndex] = doubleValue;
+                        inputs[inputsIndex] = floatValue;
                         columnIndexes[inputsIndex++] = columnConfig.getColumnNum();
                     }
                 }

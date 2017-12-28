@@ -35,5 +35,5 @@ public interface UpdateRule {
 
     void init(Weight weight);
 
-    void update(double[] gradients, double[] weights, int iteration);
+    void update(float[] gradients, float[] weights, int iteration);
 }

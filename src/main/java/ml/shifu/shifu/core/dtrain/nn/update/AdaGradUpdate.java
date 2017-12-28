@@ -46,7 +46,7 @@ public class AdaGradUpdate implements UpdateRule {
     }
 
     @Override
-    public void update(double[] gradients, double[] weights, int iteration) {
+    public void update(float[] gradients, float[] weights, int iteration) {
         for(int i = 0; i < weights.length; i++) {
             this.cache[i] += gradients[i] * gradients[i];
             final double delta = (this.learningRate * gradients[i]) / (Math.sqrt(cache[i]) + this.eps);

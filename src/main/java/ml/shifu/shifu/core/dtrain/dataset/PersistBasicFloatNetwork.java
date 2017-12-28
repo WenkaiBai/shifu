@@ -26,12 +26,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.StringTokenizer;
 
 import ml.shifu.shifu.core.dtrain.nn.ActivationReLU;
 
 import org.apache.commons.lang.StringUtils;
 import org.encog.engine.network.activation.ActivationFunction;
-import org.encog.neural.flat.FlatNetwork;
 import org.encog.neural.networks.BasicNetwork;
 import org.encog.neural.networks.PersistBasicNetwork;
 import org.encog.persist.EncogFileSection;
@@ -73,7 +73,7 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
     @Override
     public final Object read(final InputStream is) {
         final BasicFloatNetwork result = new BasicFloatNetwork();
-        final FlatNetwork flat = new FlatNetwork();
+        final FloatFlatNetwork flat = new FloatFlatNetwork();
         final EncogReadHelper in = new EncogReadHelper(is);
         EncogFileSection section;
         while((section = in.readNextSection()) != null) {
@@ -96,11 +96,11 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
                 flat.setLayerFeedCounts(EncogFileSection.parseIntArray(params, BasicNetwork.TAG_LAYER_FEED_COUNTS));
                 flat.setLayerContextCount(EncogFileSection.parseIntArray(params, BasicNetwork.TAG_LAYER_CONTEXT_COUNT));
                 flat.setLayerIndex(EncogFileSection.parseIntArray(params, BasicNetwork.TAG_LAYER_INDEX));
-                flat.setLayerOutput(EncogFileSection.parseDoubleArray(params, PersistConst.OUTPUT));
-                flat.setLayerSums(new double[flat.getLayerOutput().length]);
+                flat.setFloatLayerOutput(fromList(CSVFormat.EG_FORMAT, params.get(PersistConst.OUTPUT)));
+                flat.setFloatLayerSums(new float[flat.getFloatLayerOutput().length]);
                 flat.setOutputCount(EncogFileSection.parseInt(params, PersistConst.OUTPUT_COUNT));
                 flat.setWeightIndex(EncogFileSection.parseIntArray(params, BasicNetwork.TAG_WEIGHT_INDEX));
-                flat.setWeights(EncogFileSection.parseDoubleArray(params, PersistConst.WEIGHTS));
+                flat.setFloatWeights(fromList(CSVFormat.EG_FORMAT, params.get(PersistConst.WEIGHTS)));
                 flat.setBiasActivation(EncogFileSection.parseDoubleArray(params, BasicNetwork.TAG_BIAS_ACTIVATION));
             } else if(section.getSectionName().equals("BASIC") && section.getSubSectionName().equals("ACTIVATION")) {
                 int index = 0;
@@ -149,6 +149,34 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
         }
 
         result.getStructure().setFlat(flat);
+        return result;
+    }
+
+    private static synchronized float[] fromList(final CSVFormat format, final String str) {
+        // handle empty string
+        if(str.trim().length() == 0) {
+            return new float[0];
+        }
+
+        // first count the numbers
+        int count = 0;
+        final StringTokenizer tok = new StringTokenizer(str, "" + format.getSeparator());
+        while(tok.hasMoreTokens()) {
+            tok.nextToken();
+            count++;
+        }
+
+        // now allocate an object to hold that many numbers
+        final float[] result = new float[count];
+
+        // and finally parse the numbers
+        int index = 0;
+        final StringTokenizer tok2 = new StringTokenizer(str, "" + format.getSeparator());
+        while(tok2.hasMoreTokens()) {
+            final String num = tok2.nextToken();
+            final double value = format.parse(num);
+            result[index++] = (float) value;
+        }
 
         return result;
     }
@@ -160,7 +188,8 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
     public final void save(final OutputStream os, final Object obj) {
         final EncogWriteHelper out = new EncogWriteHelper(os);
         final BasicFloatNetwork net = (BasicFloatNetwork) obj;
-        final FlatNetwork flat = net.getStructure().getFlat();
+
+        final FloatFlatNetwork flat = (FloatFlatNetwork) net.getStructure().getFlat();
         out.addSection("BASIC");
         out.addSubSection("PARAMS");
         out.addProperties(net.getProperties());
@@ -177,10 +206,10 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
         out.writeProperty(BasicNetwork.TAG_LAYER_FEED_COUNTS, flat.getLayerFeedCounts());
         out.writeProperty(BasicNetwork.TAG_LAYER_CONTEXT_COUNT, flat.getLayerContextCount());
         out.writeProperty(BasicNetwork.TAG_LAYER_INDEX, flat.getLayerIndex());
-        out.writeProperty(PersistConst.OUTPUT, flat.getLayerOutput());
+        writeProperty(PersistConst.OUTPUT, flat.getFloatLayerOutput(), out);
         out.writeProperty(PersistConst.OUTPUT_COUNT, flat.getOutputCount());
         out.writeProperty(BasicNetwork.TAG_WEIGHT_INDEX, flat.getWeightIndex());
-        out.writeProperty(PersistConst.WEIGHTS, flat.getWeights());
+        writeProperty(PersistConst.WEIGHTS, flat.getFloatWeights(), out);
         out.writeProperty(BasicNetwork.TAG_BIAS_ACTIVATION, flat.getBiasActivation());
         out.addSubSection("ACTIVATION");
         for(final ActivationFunction af: flat.getActivationFunctions()) {
@@ -201,9 +230,29 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
         out.flush();
     }
 
+    private final void writeProperty(final String name, final float[] d, EncogWriteHelper out) {
+        final StringBuilder result = new StringBuilder();
+        toList(CSVFormat.EG_FORMAT, result, d);
+        out.writeProperty(name, result.toString());
+    }
+
+    private static void toList(final CSVFormat format, final StringBuilder result, final float[] data) {
+        toList(format, 20, result, data);
+    }
+
+    private static synchronized void toList(CSVFormat format, int precision, StringBuilder result, float[] data) {
+        result.setLength(0);
+        for(int i = 0; i < data.length; i++) {
+            if(i != 0) {
+                result.append(format.getSeparator());
+            }
+            result.append(format.format(data[i], precision));
+        }
+    }
+
     public BasicFloatNetwork readNetwork(final DataInput in) throws IOException {
         final BasicFloatNetwork result = new BasicFloatNetwork();
-        final FlatNetwork flat = new FlatNetwork();
+        final FloatFlatNetwork flat = new FloatFlatNetwork();
 
         // read properties
         Map<String, String> properties = new HashMap<String, String>();
@@ -229,11 +278,11 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
         flat.setLayerFeedCounts(readIntArray(in));
         flat.setLayerContextCount(readIntArray(in));
         flat.setLayerIndex(readIntArray(in));
-        flat.setLayerOutput(readDoubleArray(in));
+        flat.setFloatLayerOutput(readDouble2FloatArray(in));
         flat.setOutputCount(in.readInt());
-        flat.setLayerSums(new double[flat.getLayerOutput().length]);
+        flat.setFloatLayerSums(new float[flat.getFloatLayerOutput().length]);
         flat.setWeightIndex(readIntArray(in));
-        flat.setWeights(readDoubleArray(in));
+        flat.setFloatWeights(readDouble2FloatArray(in));
         flat.setBiasActivation(readDoubleArray(in));
 
         // read activations
@@ -277,7 +326,7 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
     }
 
     public void saveNetwork(DataOutput out, final BasicFloatNetwork network) throws IOException {
-        final FlatNetwork flat = network.getStructure().getFlat();
+        final FloatFlatNetwork flat = (FloatFlatNetwork) network.getStructure().getFlat();
         // write general properties
         Map<String, String> properties = network.getProperties();
         if(properties == null) {
@@ -305,10 +354,10 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
         writeIntArray(out, flat.getLayerFeedCounts());
         writeIntArray(out, flat.getLayerContextCount());
         writeIntArray(out, flat.getLayerIndex());
-        writeDoubleArray(out, flat.getLayerOutput());
+        writeDoubleArray(out, flat.getFloatLayerOutput());
         out.writeInt(flat.getOutputCount());
         writeIntArray(out, flat.getWeightIndex());
-        writeDoubleArray(out, flat.getWeights());
+        writeDoubleArray(out, flat.getFloatWeights());
         writeDoubleArray(out, flat.getBiasActivation());
 
         // write activation list
@@ -347,6 +396,15 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
         return array;
     }
 
+    private float[] readDouble2FloatArray(DataInput in) throws IOException {
+        int size = in.readInt();
+        float[] array = new float[size];
+        for(int i = 0; i < size; i++) {
+            array[i] = (float) in.readDouble();
+        }
+        return array;
+    }
+
     private void writeIntArray(DataOutput out, int[] array) throws IOException {
         if(array == null) {
             out.writeInt(0);
@@ -365,6 +423,17 @@ public class PersistBasicFloatNetwork implements EncogPersistor {
             out.writeInt(array.length);
             for(double d: array) {
                 out.writeDouble(d);
+            }
+        }
+    }
+
+    private void writeDoubleArray(DataOutput out, float[] array) throws IOException {
+        if(array == null) {
+            out.writeInt(0);
+        } else {
+            out.writeInt(array.length);
+            for(float f: array) {
+                out.writeDouble(f);
             }
         }
     }

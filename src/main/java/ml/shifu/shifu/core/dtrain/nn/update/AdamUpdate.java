@@ -50,7 +50,7 @@ public class AdamUpdate implements UpdateRule {
     }
 
     @Override
-    public void update(double[] gradients, double[] weights, int iteration) {
+    public void update(float[] gradients, float[] weights, int iteration) {
         for(int i = 0; i < weights.length; i++) {
             m[i] = (this.beta1 * m[i]) + (1 - this.beta1) * gradients[i];
             v[i] = (this.beta2 * v[i]) + (1 - this.beta2) * gradients[i] * gradients[i];

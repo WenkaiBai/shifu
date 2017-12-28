@@ -47,7 +47,7 @@ public class MomentumUpdate implements UpdateRule {
     }
 
     @Override
-    public void update(double[] gradients, double[] weights, int iteration) {
+    public void update(float[] gradients, float[] weights, int iteration) {
         for(int i = 0; i < weights.length; i++) {
             final double delta = (this.learningRate * gradients[i]) + (this.momentum * this.lastDelta[i]);
             weights[i] += delta;

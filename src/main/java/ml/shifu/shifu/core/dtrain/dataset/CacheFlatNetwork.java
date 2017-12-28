@@ -15,8 +15,16 @@
  */
 package ml.shifu.shifu.core.dtrain.dataset;
 
+import ml.shifu.shifu.core.dtrain.nn.ActivationReLU;
+
+import org.encog.engine.network.activation.ActivationFunction;
+import org.encog.engine.network.activation.ActivationLOG;
+import org.encog.engine.network.activation.ActivationLinear;
+import org.encog.engine.network.activation.ActivationSIN;
+import org.encog.engine.network.activation.ActivationSigmoid;
+import org.encog.engine.network.activation.ActivationTANH;
+import org.encog.mathutil.BoundMath;
 import org.encog.neural.flat.FlatLayer;
-import org.encog.neural.flat.FlatNetwork;
 
 /**
  * In sensitivity computing, the first layer sum values are computed and cached in this class, when reset each input
@@ -29,16 +37,18 @@ import org.encog.neural.flat.FlatNetwork;
  * 
  * <p>
  * Thanks Chen Yang(ychen26@paypal.com) to share such optimization idea.
+ * 
+ * @author Zhang David (pengzhang@paypal.com)
  */
-public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
+public class CacheFlatNetwork extends FloatFlatNetwork implements Cloneable {
 
     private static final long serialVersionUID = -7208969306860840672L;
 
     /**
      * Cache First layer of outputs. This array only is initialized in first call with cacheInputOutput set to true in
-     * {@link #compute(double[], double[], boolean, int)}.
+     * {@link #compute(float[], float[], boolean, int)}.
      */
-    private double[] firstLayerCache;
+    private float[] firstLayerCache;
 
     /**
      * Default constructor
@@ -63,7 +73,7 @@ public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
      *            the layers of such network.
      */
     public void initNetwork(FlatLayer[] layers) {
-        super.init(layers);
+        super.initNetwork(layers, false);
     }
 
     /**
@@ -80,11 +90,11 @@ public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
      * @param resetInputIndex
      *            if cacheInputOutput is false, resetInputIndex is which item should be removed.
      */
-    public void compute(double[] input, double[] output, boolean cacheInputOutput, int resetInputIndex) {
-        final int sourceIndex = getLayerOutput().length - getLayerCounts()[getLayerCounts().length - 1];
+    public void compute(float[] input, float[] output, boolean cacheInputOutput, int resetInputIndex) {
+        final int sourceIndex = getFloatLayerOutput().length - getLayerCounts()[getLayerCounts().length - 1];
 
         for(int i = 0; i < getInputCount(); i++) {
-            getLayerOutput()[i + sourceIndex] = input[i];
+            getFloatLayerOutput()[i + sourceIndex] = input[i];
         }
 
         for(int i = this.getLayerIndex().length - 1; i > 0; i--) {
@@ -95,10 +105,10 @@ public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
         final int offset = getContextTargetOffset()[0];
 
         for(int x = 0; x < getContextTargetSize()[0]; x++) {
-            this.getLayerOutput()[offset + x] = this.getLayerOutput()[x];
+            this.getFloatLayerOutput()[offset + x] = this.getFloatLayerOutput()[x];
         }
 
-        System.arraycopy(getLayerOutput(), 0, output, 0, this.getOutputCount());
+        System.arraycopy(getFloatLayerOutput(), 0, output, 0, this.getOutputCount());
     }
 
     /**
@@ -128,20 +138,20 @@ public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
         // init cache array for the first time
         if(cacheInputOutput && currentLayer == this.getLayerIndex().length - 1) {
             if(this.firstLayerCache == null || this.firstLayerCache.length != outputSize) {
-                this.firstLayerCache = new double[outputSize];
+                this.firstLayerCache = new float[outputSize];
             }
         }
 
         // weight values
         for(int x = outputIndex; x < limitX; x++) {
             if(cacheInputOutput) {
-                double sum = 0;
+                float sum = 0;
                 for(int y = inputIndex; y < limitY; y++) {
-                    sum += super.getWeights()[index++] * super.getLayerOutput()[y];
+                    sum += super.getFloatWeights()[index++] * super.getFloatLayerOutput()[y];
                 }
 
-                super.getLayerSums()[x] = sum;
-                super.getLayerOutput()[x] = sum;
+                super.getFloatLayerSums()[x] = sum;
+                super.getFloatLayerOutput()[x] = sum;
 
                 if(currentLayer == this.getLayerIndex().length - 1) {
                     // cache first layer output here
@@ -150,31 +160,64 @@ public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
             } else {
                 if(currentLayer == this.getLayerIndex().length - 1) {
                     // to use the cache, use cache_sum - current item value to save computation to save computation
-                    double sum = this.firstLayerCache[x - outputIndex] - super.getWeights()[index + resetInputIndex]
-                            * super.getLayerOutput()[inputIndex + resetInputIndex];
+                    float sum = this.firstLayerCache[x - outputIndex]
+                            - super.getFloatWeights()[index + resetInputIndex]
+                            * super.getFloatLayerOutput()[inputIndex + resetInputIndex];
                     index += inputSize;
-                    super.getLayerSums()[x] = sum;
-                    super.getLayerOutput()[x] = sum;
+                    super.getFloatLayerSums()[x] = sum;
+                    super.getFloatLayerSums()[x] = sum;
                 } else {
                     // if other layer, should still use raw computation.
-                    double sum = 0;
+                    float sum = 0;
                     for(int y = inputIndex; y < limitY; y++) {
-                        sum += super.getWeights()[index++] * super.getLayerOutput()[y];
+                        sum += super.getFloatWeights()[index++] * super.getFloatLayerOutput()[y];
                     }
-                    super.getLayerSums()[x] = sum;
-                    super.getLayerOutput()[x] = sum;
+                    super.getFloatLayerSums()[x] = sum;
+                    super.getFloatLayerSums()[x] = sum;
                 }
             }
         }
 
-        super.getActivationFunctions()[currentLayer - 1].activationFunction(super.getLayerOutput(), outputIndex,
-                outputSize);
+        // do activation for float type here, FIXME, duplicated code with FloatFlatNetwork
+        // why duplicated code, because ActivationFunction doesn't access float array
+        ActivationFunction af = super.getActivationFunctions()[currentLayer - 1];
+        if(af instanceof ActivationSigmoid) {
+            for(int i = outputIndex; i < outputIndex + outputSize; i++) {
+                super.getFloatLayerOutput()[i] = (float) (1.0 / (1.0 + BoundMath.exp(-1
+                        * super.getFloatLayerOutput()[i])));
+            }
+        } else if(af instanceof ActivationTANH) {
+            for(int i = outputIndex; i < outputIndex + outputSize; i++) {
+                super.getFloatLayerOutput()[i] = (float) Math.tanh(super.getFloatLayerOutput()[i]);
+            }
+        } else if(af instanceof ActivationReLU) {
+            for(int i = outputIndex; i < outputIndex + outputSize; i++) {
+                float output = super.getFloatLayerOutput()[i];
+                if(output <= 0f) {
+                    super.getFloatLayerOutput()[i] = 0f;
+                }
+            }
+        } else if(af instanceof ActivationSIN) {
+            for(int i = outputIndex; i < outputIndex + outputSize; i++) {
+                super.getFloatLayerOutput()[i] = (float) BoundMath.sin(super.getFloatLayerOutput()[i]);
+            }
+        } else if(af instanceof ActivationLOG) {
+            for(int i = outputIndex; i < outputIndex + outputSize; i++) {
+                if(super.getFloatLayerOutput()[i] >= 0) {
+                    super.getFloatLayerOutput()[i] = (float) BoundMath.log(1 + super.getFloatLayerOutput()[i]);
+                } else {
+                    super.getFloatLayerOutput()[i] = (float) -BoundMath.log(1 - super.getFloatLayerOutput()[i]);
+                }
+            }
+        } else if(af instanceof ActivationLinear) {
+            // activation for linear is doing nothing.
+        }
 
         // update context values
         final int offset = super.getContextTargetOffset()[currentLayer];
 
         for(int x = 0; x < super.getContextTargetSize()[currentLayer]; x++) {
-            super.getLayerOutput()[offset + x] = super.getLayerOutput()[outputIndex + x];
+            super.getFloatLayerOutput()[offset + x] = super.getFloatLayerOutput()[outputIndex + x];
         }
     }
 
@@ -186,7 +229,7 @@ public class CacheFlatNetwork extends FlatNetwork implements Cloneable {
     @Override
     public CacheFlatNetwork clone() {
         final CacheFlatNetwork result = new CacheFlatNetwork();
-        super.cloneFlatNetwork(result);
+        super.cloneFloatFlatNetwork(result);
         return result;
     }
 

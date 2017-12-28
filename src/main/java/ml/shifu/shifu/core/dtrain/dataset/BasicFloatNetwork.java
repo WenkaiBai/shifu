@@ -20,7 +20,6 @@ import java.util.Set;
 
 import ml.shifu.shifu.util.ClassUtils;
 
-import org.encog.ml.data.MLData;
 import org.encog.neural.NeuralNetworkError;
 import org.encog.neural.networks.BasicNetwork;
 
@@ -59,19 +58,19 @@ public class BasicFloatNetwork extends BasicNetwork {
     }
 
     /**
-     * Get the layer output. Should be called after {@link #compute(MLData)} or {@link #compute(double[], double[])}.
+     * Get the layer output. Should be called after {@link #compute(FloatMLData)} or {@link #compute(float[], float[])}.
      * 
      * @param layer
      *            The layer.
      * @return The output from the last call to compute.
      */
-    public final double[] getLayerOutput(final int layer) {
+    public final double[] getFloatLayerOutputAsDouble(final int layer) {
         super.getStructure().requireFlat();
         final int layerNumber = getLayerCount() - layer - 1;
         int layerCount = super.getStructure().getFlat().getLayerCounts()[layerNumber];
 
         int index = super.getStructure().getFlat().getLayerIndex()[layerNumber];
-        final double[] output = super.getStructure().getFlat().getLayerOutput();
+        final float[] output = ((FloatFlatNetwork)(super.getStructure().getFlat())).getFloatLayerOutput();
 
         double[] results = new double[layerCount];
         for(int i = 0; i < layerCount; i++) {
@@ -86,4 +85,37 @@ public class BasicFloatNetwork extends BasicNetwork {
         return results;
     }
 
+    /**
+     * Compute the output for this network.
+     * 
+     * @param input
+     *            The input.
+     * @param output
+     *            The output.
+     */
+    public final void compute(final float[] input, final float[] output) {
+        final BasicFloatMLData input2 = new BasicFloatMLData(input);
+        final FloatMLData output2 = this.compute(input2);
+        System.arraycopy(output2.getData(), 0, output, 0, output2.getData().length);
+    }
+
+    /**
+     * Compute the output for a given input to the neural network.
+     * 
+     * @param input
+     *            The input to the neural network.
+     * @return The output from the neural network.
+     */
+    public final FloatMLData compute(FloatMLData input) {
+        try {
+            final FloatMLData result = new BasicFloatMLData(super.getStructure().getFlat().getOutputCount());
+            ((FloatFlatNetwork) (super.getStructure().getFlat())).compute(input.getData(), result.getData());
+            return result;
+        } catch (final ArrayIndexOutOfBoundsException ex) {
+            throw new NeuralNetworkError(
+                    "Index exception: there was likely a mismatch between layer sizes, or the size of the input presented to the network.",
+                    ex);
+        }
+    }
+    
 }

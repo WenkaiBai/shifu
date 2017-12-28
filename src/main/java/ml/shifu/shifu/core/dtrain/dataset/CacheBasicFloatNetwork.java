@@ -15,8 +15,6 @@
  */
 package ml.shifu.shifu.core.dtrain.dataset;
 
-import org.encog.ml.data.MLData;
-import org.encog.ml.data.basic.BasicMLData;
 import org.encog.neural.NeuralNetworkError;
 
 /**
@@ -25,7 +23,7 @@ import org.encog.neural.NeuralNetworkError;
  * 
  * Thanks (Chen Yang)ychen26@paypal.com to share such optimization idea.
  * 
- * @author pengzhang
+ * @author Zhang David (pengzhang@paypal.com)
  */
 public class CacheBasicFloatNetwork extends BasicFloatNetwork {
 
@@ -51,7 +49,7 @@ public class CacheBasicFloatNetwork extends BasicFloatNetwork {
      * @param resetInputIndex
      *            if cacheInputOutput is false, resetInputIndex is which item should be removed.
      */
-    public void compute(double[] input, double[] output, boolean cacheInputOutput, int resetInputIndex) {
+    public void compute(float[] input, float[] output, boolean cacheInputOutput, int resetInputIndex) {
         CacheFlatNetwork flat = (CacheFlatNetwork) getFlat();
         flat.compute(input, output, cacheInputOutput, resetInputIndex);
     }
@@ -69,9 +67,9 @@ public class CacheBasicFloatNetwork extends BasicFloatNetwork {
      *            if cacheInputOutput is false, resetInputIndex is which item should be removed.
      * @return output value as score.
      */
-    public final MLData compute(final MLData input, boolean cacheInputOutput, int resetInputIndex) {
+    public final FloatMLData compute(final FloatMLData input, boolean cacheInputOutput, int resetInputIndex) {
         try {
-            final MLData result = new BasicMLData(this.network.getStructure().getFlat().getOutputCount());
+            final FloatMLData result = new BasicFloatMLData(this.network.getStructure().getFlat().getOutputCount());
             compute(input.getData(), result.getData(), cacheInputOutput, resetInputIndex);
             return result;
         } catch (final ArrayIndexOutOfBoundsException ex) {

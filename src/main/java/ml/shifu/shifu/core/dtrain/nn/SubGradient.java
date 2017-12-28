@@ -35,7 +35,7 @@ import org.slf4j.LoggerFactory;
  * {@link SubGradient} is copied from Encog framework. The reason is that we original Gradient don't pop up
  * {@link #gradients} outside. While we need gradients accumulated into {@link NNMaster} to update NN weights.
  */
-public class SubGradient implements Callable<double[]> {
+public class SubGradient implements Callable<float[]> {
 
     protected static final Logger LOG = LoggerFactory.getLogger(SubGradient.class);
 
@@ -57,7 +57,7 @@ public class SubGradient implements Callable<double[]> {
     /**
      * The deltas for each layer.
      */
-    private double[] layerDelta;
+    private float[] layerDelta;
 
     /**
      * The neuron counts, per layer.
@@ -82,22 +82,22 @@ public class SubGradient implements Callable<double[]> {
     /**
      * The output from each layer.
      */
-    private double[] layerOutput;
+    private float[] layerOutput;
 
     /**
      * The sums.
      */
-    private double[] layerSums;
+    private float[] layerSums;
 
     /**
      * The gradients.
      */
-    private double[] gradients;
+    private float[] gradients;
 
     /**
      * The weights and thresholds.
      */
-    private double[] weights;
+    private float[] weights;
 
     /**
      * The pair to use for training.
@@ -154,7 +154,7 @@ public class SubGradient implements Callable<double[]> {
     /**
      * The dropout rate for each layer.
      */
-    private double[] layerDropoutRates;
+    private float[] layerDropoutRates;
 
     /**
      * Used to generate randomness for dropout
@@ -194,16 +194,16 @@ public class SubGradient implements Callable<double[]> {
     }
 
     private void initNetworkParams() {
-        this.layerDelta = new double[this.network.getLayerOutput().length];
-        this.gradients = new double[this.network.getWeights().length];
+        this.layerDelta = new float[this.network.getFloatLayerOutput().length];
+        this.gradients = new float[this.network.getFloatWeights().length];
         this.actual = new double[this.network.getOutputCount()];
 
-        this.weights = this.network.getWeights();
+        this.weights = this.network.getFloatWeights();
         this.layerIndex = this.network.getLayerIndex();
         this.layerCounts = this.network.getLayerCounts();
         this.weightIndex = this.network.getWeightIndex();
-        this.layerOutput = this.network.getLayerOutput();
-        this.layerSums = this.network.getLayerSums();
+        this.layerOutput = ((FloatFlatNetwork) this.getNetwork()).getFloatLayerOutput();
+        this.layerSums = ((FloatFlatNetwork) this.getNetwork()).getFloatLayerSums();
         this.layerFeedCounts = this.network.getLayerFeedCounts();
 
         this.pair = BasicFloatMLDataPair.createPair(this.network.getInputCount(), getNetwork().getOutputCount());
@@ -219,8 +219,10 @@ public class SubGradient implements Callable<double[]> {
      * @param s
      *            The significance.
      */
-    private void process(final float[] input, final float[] ideal, double s) {
+    private void process(final float[] input, final float[] ideal, float s) {
+        long start = System.currentTimeMillis();
         ((FloatFlatNetwork) this.getNetwork()).compute(input, this.actual);
+        forwardTime += (System.currentTimeMillis() - start);
 
         // have to copy float ideal array to double array, since ideal array is small, it's ok to copy an array
         if(doubleIdeal == null) {
@@ -230,26 +232,35 @@ public class SubGradient implements Callable<double[]> {
             doubleIdeal[i] = ideal[i];
         }
 
+        start = System.currentTimeMillis();
         this.errorCalculation.updateError(this.actual, doubleIdeal, s);
-        this.errorFunction.calculateError(doubleIdeal, actual, this.getLayerDelta());
+
+        for(int i = 0; i < this.actual.length; i++) {
+            float error = (float) (doubleIdeal[i] - actual[i]);
+            this.layerDelta[i] = error;
+        }
 
         // TODO this logic should be moved the ErrorFunction
         if(this.errorFunction instanceof LogErrorFunction) {
             for(int i = 0; i < this.actual.length; i++) {
-                this.getLayerDelta()[i] *= s;
+                this.layerDelta[i] *= s;
             }
         } else {
             for(int i = 0; i < this.actual.length; i++) {
-                this.getLayerDelta()[i] = ((this.getNetwork().getActivationFunctions()[0].derivativeFunction(
-                        this.layerSums[i], this.layerOutput[i]) + this.flatSpot[0])) * (this.getLayerDelta()[i] * s);
+                this.layerDelta[i] = (float) (((this.getNetwork().getActivationFunctions()[0].derivativeFunction(
+                        this.layerSums[i], this.layerOutput[i]) + this.flatSpot[0])) * (this.getLayerDelta()[i] * s));
             }
         }
 
+        erroCompTime += (System.currentTimeMillis() - start);
+
+        start = System.currentTimeMillis();
         int beginTraining = this.getNetwork().getBeginTraining();
 
         for(int i = beginTraining; i < this.getNetwork().getEndTraining(); i++) {
             processLevel(i);
         }
+        backCompTime += (System.currentTimeMillis() - start);
     }
 
     /**
@@ -275,8 +286,8 @@ public class SubGradient implements Callable<double[]> {
         // handle weights
         int yi = fromLayerIndex;
         for(int y = 0; y < fromLayerSize; y++) {
-            final double output = this.layerOutput[yi];
-            double sum = 0;
+            final float output = this.layerOutput[yi];
+            float sum = 0;
             int wi = index + y;
             if(this.owner.isELM() || dropoutRate == 0d || dropoutRandomSource.nextDouble() > dropoutRate) {
                 int xi = toLayerIndex;
@@ -284,7 +295,7 @@ public class SubGradient implements Callable<double[]> {
                     // if ELM and current Level is endTrainingIndex-1, from firstHidden to input, gradients set to 0 to
                     // skip update weights on input to first layer
                     if(this.owner.isELM() && currentLevel == (this.getNetwork().getEndTraining() - 1)) {
-                        this.gradients[wi] = 0d;
+                        this.gradients[wi] = 0f;
                     } else {
                         this.gradients[wi] += output * this.getLayerDelta()[xi];
                     }
@@ -293,7 +304,7 @@ public class SubGradient implements Callable<double[]> {
                     xi++;
                 }
                 this.getLayerDelta()[yi] = sum
-                        * (activation.derivativeFunction(this.layerSums[yi], this.layerOutput[yi]) + currentFlatSpot);
+                        * (float) (activation.derivativeFunction(this.layerSums[yi], this.layerOutput[yi]) + currentFlatSpot);
             } else {
                 this.getLayerDelta()[yi] = 0;
             }
@@ -301,15 +312,21 @@ public class SubGradient implements Callable<double[]> {
         }
     }
 
+    private long forwardTime = 0L;
+
+    private long erroCompTime = 0L;
+
+    private long backCompTime = 0L;
+
     /**
      * Perform the gradient calculation
      */
     @Override
-    public final double[] call() {
+    public final float[] call() {
         try {
             // reset errors and gradients firstly
             this.errorCalculation.reset();
-            Arrays.fill(this.gradients, 0.0);
+            Arrays.fill(this.gradients, 0f);
 
             long start = this.trainLow;
             long end = this.trainHigh;
@@ -353,6 +370,9 @@ public class SubGradient implements Callable<double[]> {
                 process(this.pair.getInputArray(), this.pair.getIdealArray(), pair.getSignificance());
             }
             this.error = this.errorCalculation.calculate();
+
+            LOG.info("{}, forward time {}ms, error com time {}ms, back com time {}ms",
+                    Thread.currentThread().getName(), forwardTime, erroCompTime, backCompTime);
         } catch (final Throwable ex) {
             throw new RuntimeException(ex);
         }
@@ -413,7 +433,7 @@ public class SubGradient implements Callable<double[]> {
     /**
      * @return the gradients
      */
-    public double[] getGradients() {
+    public float[] getGradients() {
         return this.gradients;
     }
 
@@ -427,7 +447,7 @@ public class SubGradient implements Callable<double[]> {
     /**
      * @return the weights
      */
-    public double[] getWeights() {
+    public float[] getWeights() {
         return weights;
     }
 
@@ -435,21 +455,21 @@ public class SubGradient implements Callable<double[]> {
      * @param weights
      *            the weights to set
      */
-    public void setWeights(double[] weights) {
+    public void setWeights(float[] weights) {
         this.weights = weights;
-        this.getNetwork().setWeights(weights);
+        ((FloatFlatNetwork) (this.getNetwork())).setFloatWeights(weights);
     }
 
     public void setParams(BasicFloatNetwork network) {
         this.setNetwork((FloatFlatNetwork) network.getFlat());
-        this.weights = network.getFlat().getWeights();
+        this.weights = ((FloatFlatNetwork) (network.getFlat())).getFloatWeights();
     }
 
     public FlatNetwork getNetwork() {
         return network;
     }
 
-    public double[] getLayerDelta() {
+    public float[] getLayerDelta() {
         return layerDelta;
     }
 
@@ -474,7 +494,7 @@ public class SubGradient implements Callable<double[]> {
      */
     public void setNetwork(FloatFlatNetwork network) {
         this.network = network;
-        this.weights = this.network.getWeights();
+        this.weights = this.network.getFloatWeights();
     }
 
 }

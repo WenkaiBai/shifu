@@ -56,7 +56,10 @@ import ml.shifu.shifu.core.NNModel;
 import ml.shifu.shifu.core.Normalizer;
 import ml.shifu.shifu.core.TreeModel;
 import ml.shifu.shifu.core.dtrain.CommonConstants;
+import ml.shifu.shifu.core.dtrain.dataset.BasicFloatMLData;
+import ml.shifu.shifu.core.dtrain.dataset.BasicFloatMLDataPair;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatMLDataPair;
 import ml.shifu.shifu.core.dtrain.dataset.PersistBasicFloatNetwork;
 import ml.shifu.shifu.core.dtrain.gs.GridSearch;
 import ml.shifu.shifu.core.dtrain.lr.LogisticRegressionContants;
@@ -1746,6 +1749,64 @@ public final class CommonUtils {
             double cutoff, String alg) {
         double[] ideal = { Constants.DEFAULT_IDEAL_VALUE };
 
+        List<Double> inputList = buildInputList(binCategoryMap, noVarSel, modelConfig, columnConfigList, rawNsDataMap,
+                cutoff, alg);
+
+        // god, Double [] cannot be casted to double[], toArray doesn't work
+        int size = inputList.size();
+        double[] input = new double[size];
+        for(int i = 0; i < size; i++) {
+            input[i] = inputList.get(i);
+        }
+
+        return new BasicMLDataPair(new BasicMLData(input), new BasicMLData(ideal));
+    }
+
+    /**
+     * Assemble map data to Encog standard float input format. If no variable selected(noVarSel = true), all candidate
+     * variables will be selected.
+     * 
+     * @param binCategoryMap
+     *            categorical map
+     * @param noVarSel
+     *            if after var select
+     * @param modelConfig
+     *            model config instance
+     * @param columnConfigList
+     *            column config list
+     * @param rawNsDataMap
+     *            raw NSColumn data
+     * @param cutoff
+     *            cut off value
+     * @param alg
+     *            algorithm used in model
+     * @return data pair instance
+     * @throws NullPointerException
+     *             if input is null
+     * @throws NumberFormatException
+     *             if column value is not number format.
+     */
+    public static FloatMLDataPair assembleFloatNsDataPair(Map<Integer, Map<String, Integer>> binCategoryMap,
+            boolean noVarSel, ModelConfig modelConfig, List<ColumnConfig> columnConfigList,
+            Map<NSColumn, String> rawNsDataMap, double cutoff, String alg) {
+        float[] ideal = { Constants.DEFAULT_IDEAL_VALUE };
+
+        List<Double> inputList = buildInputList(binCategoryMap, noVarSel, modelConfig, columnConfigList, rawNsDataMap,
+                cutoff, alg);
+
+        // god, Double [] cannot be casted to double[], toArray doesn't work
+        int size = inputList.size();
+        float[] input = new float[size];
+        for(int i = 0; i < size; i++) {
+            input[i] = inputList.get(i).floatValue();
+        }
+
+        return new BasicFloatMLDataPair(new BasicFloatMLData(input), new BasicFloatMLData(ideal));
+    }
+
+    private static List<Double> buildInputList(Map<Integer, Map<String, Integer>> binCategoryMap, boolean noVarSel,
+            ModelConfig modelConfig, List<ColumnConfig> columnConfigList, Map<NSColumn, String> rawNsDataMap,
+            double cutoff, String alg) {
         List<Double> inputList = new ArrayList<Double>();
         boolean hasCandidates = CommonUtils.hasCandidateColumns(columnConfigList);
         for(ColumnConfig config: columnConfigList) {
@@ -1797,15 +1858,7 @@ public final class CommonUtils {
                 }
             }
         }
-
-        // god, Double [] cannot be casted to double[], toArray doesn't work
-        int size = inputList.size();
-        double[] input = new double[size];
-        for(int i = 0; i < size; i++) {
-            input[i] = inputList.get(i);
-        }
-
-        return new BasicMLDataPair(new BasicMLData(input), new BasicMLData(ideal));
+        return inputList;
     }
 
     public static String getNSVariableVal(Map<NSColumn, String> rawNsDataMap, NSColumn key) {
@@ -1874,6 +1927,70 @@ public final class CommonUtils {
         }
         double[] ideal = { Constants.DEFAULT_IDEAL_VALUE };
 
+        List<Double> inputList = buildInputList(binCategoryMap, modelConfig, columnConfigList, rawNsDataMap, cutoff,
+                alg, featureSet);
+
+        // god, Double [] cannot be casted to double[], toArray doesn't work
+        int size = inputList.size();
+        double[] input = new double[size];
+        for(int i = 0; i < size; i++) {
+            input[i] = inputList.get(i);
+        }
+
+        return new BasicMLDataPair(new BasicMLData(input), new BasicMLData(ideal));
+    }
+
+    /**
+     * Assemble map data to Encog standard float input format. If no variable selected(noVarSel = true), all candidate
+     * variables will be selected.
+     * 
+     * @param binCategoryMap
+     *            categorical map
+     * @param noVarSel
+     *            if after var select
+     * @param modelConfig
+     *            model config instance
+     * @param columnConfigList
+     *            column config list
+     * @param rawNsDataMap
+     *            raw NSColumn data
+     * @param cutoff
+     *            cut off value
+     * @param alg
+     *            algorithm used in model
+     * @param featureSet
+     *            feature set used in NN model
+     * @return data pair instance
+     * @throws NullPointerException
+     *             if input is null
+     * @throws NumberFormatException
+     *             if column value is not number format.
+     */
+    public static FloatMLDataPair assembleFloatNsDataPair(Map<Integer, Map<String, Integer>> binCategoryMap,
+            boolean noVarSel, ModelConfig modelConfig, List<ColumnConfig> columnConfigList,
+            Map<NSColumn, String> rawNsDataMap, double cutoff, String alg, Set<Integer> featureSet) {
+        if(CollectionUtils.isEmpty(featureSet)) {
+            return assembleFloatNsDataPair(binCategoryMap, noVarSel, modelConfig, columnConfigList, rawNsDataMap,
+                    cutoff, alg);
+        }
+        float[] ideal = { Constants.DEFAULT_IDEAL_VALUE };
+
+        List<Double> inputList = buildInputList(binCategoryMap, modelConfig, columnConfigList, rawNsDataMap, cutoff,
+                alg, featureSet);
+
+        // god, Double [] cannot be casted to double[], toArray doesn't work
+        int size = inputList.size();
+        float[] input = new float[size];
+        for(int i = 0; i < size; i++) {
+            input[i] = inputList.get(i).floatValue();
+        }
+
+        return new BasicFloatMLDataPair(new BasicFloatMLData(input), new BasicFloatMLData(ideal));
+    }
+
+    private static List<Double> buildInputList(Map<Integer, Map<String, Integer>> binCategoryMap,
+            ModelConfig modelConfig, List<ColumnConfig> columnConfigList, Map<NSColumn, String> rawNsDataMap,
+            double cutoff, String alg, Set<Integer> featureSet) {
         List<Double> inputList = new ArrayList<Double>();
         for(ColumnConfig config: columnConfigList) {
             if(config == null) {
@@ -1905,15 +2022,7 @@ public final class CommonUtils {
                 }
             }
         }
-
-        // god, Double [] cannot be casted to double[], toArray doesn't work
-        int size = inputList.size();
-        double[] input = new double[size];
-        for(int i = 0; i < size; i++) {
-            input[i] = inputList.get(i);
-        }
-
-        return new BasicMLDataPair(new BasicMLData(input), new BasicMLData(ideal));
+        return inputList;
     }
 
     /**
@@ -2039,6 +2148,41 @@ public final class CommonUtils {
         // if the tag is provided, ideal will be updated; otherwise it defaults to -1
         double[] ideal = { Constants.DEFAULT_IDEAL_VALUE };
 
+        List<Double> inputList = buildInputList(modelConfig, columnConfigList, cutoff, nsDataMap);
+
+        // god, Double [] cannot be casted to double[], toArray doesn't work
+        int size = inputList.size();
+        double[] input = new double[size];
+        for(int i = 0; i < size; i++) {
+            input[i] = inputList.get(i);
+        }
+
+        return new BasicMLDataPair(new BasicMLData(input), new BasicMLData(ideal));
+    }
+
+    public static FloatMLDataPair assembleFloatDataPair(ModelConfig modelConfig, List<ColumnConfig> columnConfigList,
+            Map<String, ? extends Object> rawDataMap, double cutoff) {
+        Map<NSColumn, Object> nsDataMap = new HashMap<NSColumn, Object>();
+        for(Entry<String, ? extends Object> entry: rawDataMap.entrySet()) {
+            nsDataMap.put(new NSColumn(entry.getKey()), entry.getValue());
+        }
+
+        // if the tag is provided, ideal will be updated; otherwise it defaults to -1
+        float[] ideal = { Constants.DEFAULT_IDEAL_VALUE };
+
+        List<Double> inputList = buildInputList(modelConfig, columnConfigList, cutoff, nsDataMap);
+
+        // god, Double [] cannot be casted to double[], toArray doesn't work
+        int size = inputList.size();
+        float[] input = new float[size];
+        for(int i = 0; i < size; i++) {
+            input[i] = inputList.get(i).floatValue();
+        }
+        return new BasicFloatMLDataPair(new BasicFloatMLData(input), new BasicFloatMLData(ideal));
+    }
+
+    private static List<Double> buildInputList(ModelConfig modelConfig, List<ColumnConfig> columnConfigList,
+            double cutoff, Map<NSColumn, Object> nsDataMap) {
         List<Double> inputList = new ArrayList<Double>();
         for(ColumnConfig config: columnConfigList) {
             NSColumn key = new NSColumn(config.getColumnName());
@@ -2058,15 +2202,7 @@ public final class CommonUtils {
                 inputList.addAll(normVals);
             }
         }
-
-        // god, Double [] cannot be casted to double[], toArray doesn't work
-        int size = inputList.size();
-        double[] input = new double[size];
-        for(int i = 0; i < size; i++) {
-            input[i] = inputList.get(i);
-        }
-
-        return new BasicMLDataPair(new BasicMLData(input), new BasicMLData(ideal));
+        return inputList;
     }
 
     /*

@@ -39,12 +39,12 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
     /**
      * Weights used for NN model
      */
-    private double[] weights;
+    private float[] weights;
 
     /**
      * Gradients for NN model
      */
-    private double[] gradients;
+    private float[] gradients;
 
     /**
      * Current test error which can be sent to master
@@ -71,11 +71,11 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
      */
     private int wrCount = 1;
 
-    public double[] getWeights() {
+    public float[] getWeights() {
         return weights;
     }
 
-    public void setWeights(double[] weights) {
+    public void setWeights(float[] weights) {
         this.weights = weights;
     }
 
@@ -94,15 +94,32 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
     public void setTrainError(double trainError) {
         this.trainError = trainError;
     }
-
+    
     public void accumulateGradients(double[] gradients) {
         if(this.gradients == null) {
-            this.gradients = new double[gradients.length];
-            Arrays.fill(this.gradients, 0.0);
+            this.gradients = new float[gradients.length];
+            Arrays.fill(this.gradients, 0f);
         }
 
         if(this.weights == null) {
-            this.weights = new double[gradients.length];
+            this.weights = new float[gradients.length];
+            DTrainUtils.randomize(gradients.length, this.weights);
+        }
+
+        for(int i = 0; i < gradients.length; i++) {
+            this.gradients[i] += gradients[i];
+        }
+    }
+
+
+    public void accumulateGradients(float[] gradients) {
+        if(this.gradients == null) {
+            this.gradients = new float[gradients.length];
+            Arrays.fill(this.gradients, 0f);
+        }
+
+        if(this.weights == null) {
+            this.weights = new float[gradients.length];
             DTrainUtils.randomize(gradients.length, this.weights);
         }
 
@@ -114,7 +131,7 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
     /**
      * @return the gradients
      */
-    public double[] getGradients() {
+    public float[] getGradients() {
         return gradients;
     }
 
@@ -122,7 +139,7 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
      * @param gradients
      *            the gradients to set
      */
-    public void setGradients(double[] gradients) {
+    public void setGradients(float[] gradients) {
         this.gradients = gradients;
     }
 
@@ -141,7 +158,7 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
     public void reset() {
         this.setTrainSize(0);
         if(this.gradients != null) {
-            Arrays.fill(this.gradients, 0.0);
+            Arrays.fill(this.gradients, 0f);
         }
     }
 
@@ -153,13 +170,13 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
         out.writeLong(getTrainSize());
 
         out.writeInt(getWeights().length);
-        for(double weight: getWeights()) {
-            out.writeDouble(weight);
+        for(float weight: getWeights()) {
+            out.writeFloat(weight);
         }
 
         out.writeInt(getGradients().length);
-        for(double gradient: getGradients()) {
-            out.writeDouble(gradient);
+        for(float gradient: getGradients()) {
+            out.writeFloat(gradient);
         }
 
         out.writeLong(count);
@@ -173,16 +190,16 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
         this.trainSize = in.readLong();
 
         int len = in.readInt();
-        double[] weights = new double[len];
+        float[] weights = new float[len];
         for(int i = 0; i < len; i++) {
-            weights[i] = in.readDouble();
+            weights[i] = in.readFloat();
         }
         this.weights = weights;
 
         len = in.readInt();
-        double[] gradients = new double[len];
+        float[] gradients = new float[len];
         for(int i = 0; i < len; i++) {
-            gradients[i] = in.readDouble();
+            gradients[i] = in.readFloat();
         }
         this.gradients = gradients;
 

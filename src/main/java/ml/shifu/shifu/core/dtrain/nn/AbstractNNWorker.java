@@ -513,7 +513,7 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
         LOG.debug("Set current model with params {}", context.getLastMasterResult());
 
         // initialize gradients if null
-        double[] weights = context.getLastMasterResult().getWeights();
+        float[] weights = context.getLastMasterResult().getWeights();
         if(gradient == null) {
             initGradient(this.trainingData, this.validationData, weights, this.isCrossOver);
             // register call back for shut down thread pool.
@@ -530,10 +530,10 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
             }
         }
 
-        this.gradient.getNetwork().setWeights(weights);
+        ((FloatFlatNetwork)(this.gradient.getNetwork())).setFloatWeights(weights);
 
         // using the weights from master to train model in current iteration
-        double[] gradients = null;
+        float[] gradients = null;
         for(int i = 0; i < epochsPerIteration; i++) {
             gradients = this.gradient.computeGradients(context.getCurrentIteration());
             if(this.epochsPerIteration > 1) {
@@ -558,14 +558,14 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
         params.setTrainError(trainError);
         params.setGradients(gradients);
         // prevent null point;
-        params.setWeights(new double[0]);
+        params.setWeights(new float[0]);
         params.setTrainSize(this.trainingData.getRecordCount());
         params.setCount(count);
         return params;
     }
 
     @SuppressWarnings("unchecked")
-    private void initGradient(FloatMLDataSet training, FloatMLDataSet testing, double[] weights, boolean isCrossOver) {
+    private void initGradient(FloatMLDataSet training, FloatMLDataSet testing, float[] weights, boolean isCrossOver) {
         int numLayers = (Integer) this.validParams.get(CommonConstants.NUM_HIDDEN_LAYERS);
         List<String> actFunc = (List<String>) this.validParams.get(CommonConstants.ACTIVATION_FUNC);
         List<Integer> hiddenNodeList = (List<Integer>) this.validParams.get(CommonConstants.NUM_HIDDEN_NODES);
@@ -573,7 +573,7 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
         BasicNetwork network = DTrainUtils.generateNetwork(this.featureInputsCnt, this.outputNodeCount, numLayers,
                 actFunc, hiddenNodeList, false, this.dropoutRate, this.wgtInit);
         // use the weights from master
-        network.getFlat().setWeights(weights);
+        ((FloatFlatNetwork)(network.getFlat())).setFloatWeights(weights);
 
         FlatNetwork flat = network.getFlat();
         // copy Propagation from encog, fix flat spot problem
@@ -591,8 +591,8 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
 
     private NNParams buildEmptyNNParams(WorkerContext<NNParams, NNParams> workerContext) {
         NNParams params = new NNParams();
-        params.setWeights(new double[0]);
-        params.setGradients(new double[0]);
+        params.setWeights(new float[0]);
+        params.setGradients(new float[0]);
         params.setTestError(NNConstants.DRY_ERROR);
         params.setTrainError(NNConstants.DRY_ERROR);
         return params;

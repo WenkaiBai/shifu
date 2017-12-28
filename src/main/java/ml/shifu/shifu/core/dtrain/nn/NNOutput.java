@@ -32,6 +32,7 @@ import ml.shifu.shifu.container.obj.RawSourceData.SourceType;
 import ml.shifu.shifu.core.dtrain.CommonConstants;
 import ml.shifu.shifu.core.dtrain.DTrainUtils;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatFlatNetwork;
 import ml.shifu.shifu.core.dtrain.dataset.PersistBasicFloatNetwork;
 import ml.shifu.shifu.core.dtrain.gs.GridSearch;
 import ml.shifu.shifu.fs.ShifuFileUtils;
@@ -103,7 +104,7 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
     /**
      * The best weights that we meet
      */
-    private double[] optimizedWeights = null;
+    private float[] optimizedWeights = null;
 
     /**
      * Progress output stream which is used to write progress to that HDFS file. Should be closed in
@@ -131,7 +132,7 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
     /**
      * Dropout rate which is in [0, 1], default it is 0
      */
-    private double dropoutRate = 0d;
+    private float dropoutRate = 0f;
 
     /**
      * Binary model path
@@ -167,7 +168,8 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
         // save tmp to hdfs according to raw trainer logic
         final int tmpModelFactor = DTrainUtils.tmpModelFactor(context.getTotalIteration());
         final int currentIteration = context.getCurrentIteration();
-        final double[] weights = context.getMasterResult().getWeights();
+        final float[] weights = context.getMasterResult().getWeights();
+
         final int totalIteration = context.getTotalIteration();
         final boolean isHalt = context.getMasterResult().isHalt();
         // currentIteration - 1 because the first iteration is used for sync master models to workers
@@ -256,7 +258,7 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
     /**
      * Save tmp nn model to HDFS.
      */
-    private void saveTmpNNToHDFS(int iteration, double[] weights) {
+    private void saveTmpNNToHDFS(int iteration, float[] weights) {
         Path out = new Path(DTrainUtils.getTmpModelName(this.tmpModelsFolder, this.trainerId, iteration, modelConfig
                 .getTrain().getAlgorithm().toLowerCase()));
         writeModelWeightsToFileSystem(weights, out, false);
@@ -286,7 +288,7 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
 
             Object dropoutRateObj = validParams.get(CommonConstants.DROPOUT_RATE);
             if(dropoutRateObj != null) {
-                this.dropoutRate = Double.valueOf(dropoutRateObj.toString());
+                this.dropoutRate = Float.valueOf(dropoutRateObj.toString());
             }
             LOG.info("'dropoutRate' in master output is :{}", this.dropoutRate);
 
@@ -369,20 +371,20 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
         PersistorRegistry.getInstance().add(new PersistBasicFloatNetwork());
     }
 
-    private void writeModelWeightsToFileSystem(double[] weights, Path out, boolean isLast) {
+    private void writeModelWeightsToFileSystem(float[] weights, Path out, boolean isLast) {
         if(isLast) {
             writeBinaryModelWeightsToFileSystem(weights, this.bModel);
         }
         writeEncogModelToFileSystem(weights, out);
     }
 
-    private void writeEncogModelToFileSystem(double[] weights, Path out) {
-        double[] finalWeights = refineWeights(weights);
+    private void writeEncogModelToFileSystem(float[] weights, Path out) {
+        float[] finalWeights = refineWeights(weights);
         FSDataOutputStream fos = null;
         try {
             fos = FileSystem.get(new Configuration()).create(out);
             LOG.info("Writing results to {}", out);
-            this.network.getFlat().setWeights(finalWeights);
+            ((FloatFlatNetwork)(this.network.getFlat())).setFloatWeights(finalWeights);
             if(out != null) {
                 EncogDirectoryPersistence.saveObject(fos, this.network);
             }
@@ -393,12 +395,12 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
         }
     }
 
-    private double[] refineWeights(double[] weights) {
-        double[] finalWeights;
-        if(this.dropoutRate == 0d) {
+    private float[] refineWeights(float[] weights) {
+        float[] finalWeights;
+        if(this.dropoutRate == 0f) {
             finalWeights = weights;
         } else {
-            finalWeights = new double[weights.length];
+            finalWeights = new float[weights.length];
             for(int i = 0; i < finalWeights.length; i++) {
                 // do we need to norm all weights or leave last hidden layer to output layer not normed???
                 // it is ok to add or not added in last iteration as such parameters only impact last final output score
@@ -409,10 +411,10 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
         return finalWeights;
     }
 
-    private void writeBinaryModelWeightsToFileSystem(double[] weights, Path out) {
-        double[] finalWeights = refineWeights(weights);
+    private void writeBinaryModelWeightsToFileSystem(float[] weights, Path out) {
+        float[] finalWeights = refineWeights(weights);
         LOG.info("Writing NN models to {}.", out);
-        this.network.getFlat().setWeights(finalWeights);
+        ((FloatFlatNetwork) (((BasicFloatNetwork) this.network).getFlat())).setFloatWeights(finalWeights);
 
         BasicML basicML = this.network;
         try {

@@ -47,7 +47,7 @@ public class NesterovUpdate implements UpdateRule {
     }
 
     @Override
-    public void update(double[] gradients, double[] weights, int iteration) {
+    public void update(float[] gradients, float[] weights, int iteration) {
         for(int i = 0; i < weights.length; i++) {
             double prevNesterov = this.lastDelta[i];
             this.lastDelta[i] = (this.momentum * prevNesterov) + (gradients[i] * this.learningRate);

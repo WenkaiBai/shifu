@@ -16,7 +16,12 @@
 package ml.shifu.shifu.core.dtrain.nn;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 
 import ml.shifu.guagua.GuaguaRuntimeException;
 import ml.shifu.guagua.master.AbstractMasterComputable;
@@ -31,6 +36,7 @@ import ml.shifu.shifu.core.dtrain.DTrainUtils;
 import ml.shifu.shifu.core.dtrain.RegulationLevel;
 import ml.shifu.shifu.core.dtrain.Weight;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatFlatNetwork;
 import ml.shifu.shifu.core.dtrain.gs.GridSearch;
 import ml.shifu.shifu.fs.ShifuFileUtils;
 import ml.shifu.shifu.util.CommonUtils;
@@ -238,15 +244,15 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
             this.learningRate = this.learningRate * (1.0d - this.learningDecay);
             // without learningDecay Parameter using sqrt(iteration number) to decrease learning rate
             // this.learningRate = this.learningRate / Math.sqrt(context.getCurrentIteration() -1);
-            this.weightCalculator.setLearningRate(this.learningRate);
+            this.weightCalculator.setLearningRate(this.learningRate.floatValue());
             this.weightCalculator.setNumTrainSize(this.globalNNParams.getTrainSize());
         }
 
-        double[] oldWeights = Arrays.copyOf(this.globalNNParams.getWeights(), this.globalNNParams.getWeights().length);
+        float[] oldWeights = Arrays.copyOf(this.globalNNParams.getWeights(), this.globalNNParams.getWeights().length);
 
         // use last weights and current gradients to calculate, current iteration - 1 to remove 1st iteration for worker
         // data reading
-        double[] weights = this.weightCalculator.calculateWeights(this.globalNNParams.getWeights(),
+        float[] weights = this.weightCalculator.calculateWeights(this.globalNNParams.getWeights(),
                 this.globalNNParams.getGradients(), (context.getCurrentIteration() - 1));
 
         this.globalNNParams.setWeights(weights);
@@ -283,7 +289,7 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
         params.setTrainError(currentTrainError);
         params.setTestError(currentTestError);
         // prevent null point
-        params.setGradients(new double[0]);
+        params.setGradients(new float[0]);
         params.setWeights(weights);
         LOG.debug("master result {} in iteration {}", params, context.getCurrentIteration());
 
@@ -329,8 +335,8 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
         params.setTrainError(0);
         params.setTestError(0);
         // prevent null point
-        params.setGradients(new double[0]);
-        params.setWeights(loadModel.getFlat().getWeights());
+        params.setGradients(new float[0]);
+        params.setWeights(((FloatFlatNetwork)loadModel.getFlat()).getFloatWeights());
         return params;
     }
 
@@ -357,8 +363,8 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
         params.setTrainError(0);
         params.setTestError(0);
         // prevent null point
-        params.setGradients(new double[0]);
-        params.setWeights(network.getFlat().getWeights());
+        params.setGradients(new float[0]);
+        params.setWeights(((FloatFlatNetwork)network.getFlat()).getFloatWeights());
         return params;
     }
 

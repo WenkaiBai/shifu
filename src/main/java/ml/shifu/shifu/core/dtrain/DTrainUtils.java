@@ -24,6 +24,7 @@ import ml.shifu.shifu.container.obj.ColumnConfig;
 import ml.shifu.shifu.container.obj.ModelConfig;
 import ml.shifu.shifu.container.obj.ModelNormalizeConf;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatFlatNetwork;
 import ml.shifu.shifu.core.dtrain.dataset.FloatNeuralStructure;
 import ml.shifu.shifu.core.dtrain.nn.ActivationReLU;
 import ml.shifu.shifu.core.dtrain.nn.BasicDropoutLayer;
@@ -69,23 +70,23 @@ public final class DTrainUtils {
      * The POSITIVE ETA value. This is specified by the resilient propagation algorithm. This is the percentage by which
      * the deltas are increased by if the partial derivative is greater than zero.
      */
-    public static final double POSITIVE_ETA = 1.2;
+    public static final float POSITIVE_ETA = 1.2f;
 
     /**
      * The NEGATIVE ETA value. This is specified by the resilient propagation algorithm. This is the percentage by which
      * the deltas are increased by if the partial derivative is less than zero.
      */
-    public static final double NEGATIVE_ETA = 0.5;
+    public static final float NEGATIVE_ETA = 0.5f;
 
     /**
      * The minimum delta value for a weight matrix value.
      */
-    public static final double DELTA_MIN = 1e-6;
+    public static final float DELTA_MIN = 1e-6f;
 
     /**
      * The starting update for a delta.
      */
-    public static final double DEFAULT_INITIAL_UPDATE = 0.1;
+    public static final float DEFAULT_INITIAL_UPDATE = 0.1f;
 
     private DTrainUtils() {
     }
@@ -246,11 +247,11 @@ public final class DTrainUtils {
         return Math.max(epochs / 25, 20);
     }
 
-//    public static BasicNetwork generateNetwork(int in, int out, int numLayers, List<String> actFunc,
-//            List<Integer> hiddenNodeList, boolean isRandomizeWeights, double dropoutRate) {
-//        return generateNetwork(in, out, numLayers, actFunc, hiddenNodeList, isRandomizeWeights, dropoutRate,
-//                WGT_INIT_DEFAULT);
-//    }
+    // public static BasicNetwork generateNetwork(int in, int out, int numLayers, List<String> actFunc,
+    // List<Integer> hiddenNodeList, boolean isRandomizeWeights, double dropoutRate) {
+    // return generateNetwork(in, out, numLayers, actFunc, hiddenNodeList, isRandomizeWeights, dropoutRate,
+    // WGT_INIT_DEFAULT);
+    // }
 
     public static BasicNetwork generateNetwork(int in, int out, int numLayers, List<String> actFunc,
             List<Integer> hiddenNodeList, boolean isRandomizeWeights, double dropoutRate, String wgtInit) {
@@ -291,17 +292,29 @@ public final class DTrainUtils {
         if(isRandomizeWeights) {
             if(wgtInit == null || wgtInit.length() == 0) {
                 // default randomization
-                network.reset();
+                // network.reset();
+                float[] floatWeights = ((FloatFlatNetwork) (network.getFlat())).getFloatWeights();
+                for(int i = 0; i < floatWeights.length; i++) {
+                    floatWeights[i] = (float) NguyenWidrowRandomizer.randomize(-1, 1);
+                }
             } else if(wgtInit.equalsIgnoreCase(WGT_INIT_GAUSSIAN)) {
                 new GaussianRandomizer(0, 1).randomize(network);
             } else if(wgtInit.equalsIgnoreCase(WGT_INIT_XAVIER)) {
                 new XaiverRandomizer().randomize(network);
             } else if(wgtInit.equalsIgnoreCase(WGT_INIT_DEFAULT)) {
                 // default randomization
-                network.reset();
+                // network.reset();
+                float[] floatWeights = ((FloatFlatNetwork) (network.getFlat())).getFloatWeights();
+                for(int i = 0; i < floatWeights.length; i++) {
+                    floatWeights[i] = (float) NguyenWidrowRandomizer.randomize(-1, 1);
+                }
             } else {
                 // default randomization
-                network.reset();
+                // network.reset();
+                float[] floatWeights = ((FloatFlatNetwork) (network.getFlat())).getFloatWeights();
+                for(int i = 0; i < floatWeights.length; i++) {
+                    floatWeights[i] = (float) NguyenWidrowRandomizer.randomize(-1, 1);
+                }
             }
         }
 
@@ -332,6 +345,12 @@ public final class DTrainUtils {
     public static void randomize(int seed, double[] weights) {
         NguyenWidrowRandomizer randomizer = new NguyenWidrowRandomizer(-1, 1);
         randomizer.randomize(weights);
+    }
+
+    public static void randomize(int seed, float[] weights) {
+        for(int i = 0; i < weights.length; i++) {
+            weights[i] = (float) NguyenWidrowRandomizer.randomize(-1, 1);
+        }
     }
 
     /**

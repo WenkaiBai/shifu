@@ -171,8 +171,8 @@ public class ParallelGradient {
         this.batchs = batchs;
     }
 
-    public double[] computeGradients(int currentIteration) {
-        CompletionService<double[]> completionService = new ExecutorCompletionService<double[]>(this.threadPool);
+    public float[] computeGradients(int currentIteration) {
+        CompletionService<float[]> completionService = new ExecutorCompletionService<float[]>(this.threadPool);
         this.subGradients = new SubGradient[this.threadCount];
         Random dropoutRandom = new Random();
         for(int i = 0; i < this.threadCount; i++) {
@@ -188,9 +188,9 @@ public class ParallelGradient {
         }
 
         int rCnt = 0;
-        double[] finalGradients = new double[this.getNetwork().getWeights().length];
+        float[] finalGradients = new float[((FloatFlatNetwork) (this.getNetwork())).getFloatWeights().length];
         while(rCnt < this.threadCount) {
-            double[] gradients = null;
+            float[] gradients = null;
             try {
                 gradients = completionService.take().get();
             } catch (ExecutionException e) {
@@ -318,9 +318,10 @@ public class ParallelGradient {
      * Average weights for all sub gradients and then set to current network.
      */
     public void resetNetworkWeights() {
-        double[] weights = new double[this.network.getWeights().length];
+        float[] floatWeights = ((FloatFlatNetwork) (this.getNetwork())).getFloatWeights();
+        float[] weights = new float[floatWeights.length];
         for(int i = 0; i < subGradients.length; i++) {
-            double[] subWeights = subGradients[i].getNetwork().getWeights();
+            float[] subWeights = ((FloatFlatNetwork) (subGradients[i].getNetwork())).getFloatWeights();
             for(int j = 0; j < weights.length; j++) {
                 weights[j] += subWeights[j];
             }
@@ -328,7 +329,7 @@ public class ParallelGradient {
         for(int j = 0; j < weights.length; j++) {
             weights[j] /= subGradients.length;
         }
-        this.network.setWeights(weights);
+        ((FloatFlatNetwork) (this.getNetwork())).setFloatWeights(weights);
     }
 
     /**

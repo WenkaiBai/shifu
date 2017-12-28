@@ -30,6 +30,8 @@ import ml.shifu.shifu.container.obj.ColumnConfig;
 import ml.shifu.shifu.container.obj.ModelConfig;
 import ml.shifu.shifu.core.dtrain.DTrainUtils;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatMLData;
+import ml.shifu.shifu.core.dtrain.dataset.FloatMLDataPair;
 import ml.shifu.shifu.core.dtrain.nn.NNConstants;
 import ml.shifu.shifu.util.CommonUtils;
 import ml.shifu.shifu.util.Constants;
@@ -154,6 +156,7 @@ public class Scorer {
 
     public ScoreObject scoreNsData(MLDataPair inputPair, Map<NSColumn, String> rawNsDataMap) {
         if(inputPair == null && !this.alg.equalsIgnoreCase(NNConstants.NN_ALG_NAME)) {
+            // non nn, assemble data here, NN assemble data in detailed model to get feature set
             inputPair = CommonUtils.assembleNsDataPair(binCategoryMap, noVarSelect, modelConfig, columnConfigList,
                     rawNsDataMap, cutoff, alg);
         }
@@ -166,8 +169,8 @@ public class Scorer {
                 final BasicFloatNetwork network = (model instanceof BasicFloatNetwork) ? (BasicFloatNetwork) model
                         : ((NNModel) model).getIndependentNNModel().getBasicNetworks().get(0);
 
-                final MLDataPair networkPair = CommonUtils.assembleNsDataPair(binCategoryMap, noVarSelect, modelConfig,
-                        columnConfigList, rawNsDataMap, cutoff, alg, network.getFeatureSet());
+                final FloatMLDataPair networkPair = CommonUtils.assembleFloatNsDataPair(binCategoryMap, noVarSelect,
+                        modelConfig, columnConfigList, rawNsDataMap, cutoff, alg, network.getFeatureSet());
 
                 /*
                  * if(network.getFeatureSet().size() != networkPair.getInput().size()) {
@@ -183,19 +186,25 @@ public class Scorer {
                 modelResults.add(new Callable<MLData>() {
                     @Override
                     public MLData call() {
-                        MLData finalOutput = network.compute(networkPair.getInput());
-
-                        if(fnlOutputHiddenLayerIndex == 0) {
-                            return finalOutput;
+                        FloatMLData finalOutput = network.compute(networkPair.getInput());
+                        float[] outputs = finalOutput.getData();
+                        double[] outputsD = new double[outputs.length];
+                        for(int i = 0; i < outputsD.length; i++) {
+                            outputsD[i] = outputs[i];
                         }
 
-                        // append output values in hidden layer
-                        double[] hiddenOutputs = network.getLayerOutput(fnlOutputHiddenLayerIndex);
-                        double[] outputs = new double[finalOutput.getData().length + hiddenOutputs.length];
+                        if(fnlOutputHiddenLayerIndex == 0) {
+                            return new BasicMLData(outputsD);
+                        }
 
-                        System.arraycopy(finalOutput.getData(), 0, outputs, 0, finalOutput.getData().length);
-                        System.arraycopy(hiddenOutputs, 0, outputs, finalOutput.getData().length, hiddenOutputs.length);
-                        return new BasicMLData(outputs);
+                        // // append output values in hidden layer
+                        double[] hiddenOutputs = network.getFloatLayerOutputAsDouble(fnlOutputHiddenLayerIndex);
+                        double[] newOutputs = new double[finalOutput.getData().length + hiddenOutputs.length];
+
+                        System.arraycopy(finalOutput.getData(), 0, newOutputs, 0, finalOutput.getData().length);
+                        System.arraycopy(hiddenOutputs, 0, newOutputs, finalOutput.getData().length,
+                                hiddenOutputs.length);
+                        return new BasicMLData(newOutputs);
                     }
                 }.call());
             } else if(model instanceof BasicNetwork) {
