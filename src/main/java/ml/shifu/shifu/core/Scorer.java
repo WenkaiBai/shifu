@@ -201,7 +201,7 @@ public class Scorer {
                         double[] hiddenOutputs = network.getFloatLayerOutputAsDouble(fnlOutputHiddenLayerIndex);
                         double[] newOutputs = new double[finalOutput.getData().length + hiddenOutputs.length];
 
-                        System.arraycopy(finalOutput.getData(), 0, newOutputs, 0, finalOutput.getData().length);
+                        System.arraycopy(outputsD, 0, newOutputs, 0, finalOutput.getData().length);
                         System.arraycopy(hiddenOutputs, 0, newOutputs, finalOutput.getData().length,
                                 hiddenOutputs.length);
                         return new BasicMLData(newOutputs);
