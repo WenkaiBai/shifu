@@ -362,7 +362,7 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
         int featureInputsCnt = DTrainUtils.getFeatureInputsCnt(modelConfig, columnConfigList, this.subFeatures);
 
         this.network = DTrainUtils.generateNetwork(featureInputsCnt, outputNodeCount, numLayers, actFunc,
-                hiddenNodeList, false, this.dropoutRate, this.wgtInit);
+                hiddenNodeList, false, this.dropoutRate, null, this.wgtInit);
         ((BasicFloatNetwork) this.network).setFeatureSet(this.subFeatures);
 
         // register here to save models
@@ -377,12 +377,11 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
     }
 
     private void writeEncogModelToFileSystem(double[] weights, Path out) {
-        double[] finalWeights = refineWeights(weights);
         FSDataOutputStream fos = null;
         try {
             fos = FileSystem.get(new Configuration()).create(out);
             LOG.info("Writing results to {}", out);
-            this.network.getFlat().setWeights(finalWeights);
+            this.network.getFlat().setWeights(weights);
             if(out != null) {
                 EncogDirectoryPersistence.saveObject(fos, this.network);
             }
@@ -393,24 +392,8 @@ public class NNOutput extends BasicMasterInterceptor<NNParams, NNParams> {
         }
     }
 
-    private double[] refineWeights(double[] weights) {
-        double[] finalWeights;
-        if(this.dropoutRate == 0d) {
-            finalWeights = weights;
-        } else {
-            finalWeights = new double[weights.length];
-            for(int i = 0; i < finalWeights.length; i++) {
-                // do we need to norm all weights or leave last hidden layer to output layer not normed???
-                // it is ok to add or not added in last iteration as such parameters only impact last final output score
-                // but not change the order of scores
-                finalWeights[i] = weights[i] * (1 - this.dropoutRate);
-            }
-        }
-        return finalWeights;
-    }
-
     private void writeBinaryModelWeightsToFileSystem(double[] weights, Path out) {
-        double[] finalWeights = refineWeights(weights);
+        double[] finalWeights = weights;
         LOG.info("Writing NN models to {}.", out);
         this.network.getFlat().setWeights(finalWeights);
 

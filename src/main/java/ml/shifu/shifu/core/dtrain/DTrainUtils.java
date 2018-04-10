@@ -16,6 +16,7 @@
 package ml.shifu.shifu.core.dtrain;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
@@ -253,7 +254,8 @@ public final class DTrainUtils {
 //    }
 
     public static BasicNetwork generateNetwork(int in, int out, int numLayers, List<String> actFunc,
-            List<Integer> hiddenNodeList, boolean isRandomizeWeights, double dropoutRate, String wgtInit) {
+            List<Integer> hiddenNodeList, boolean isRandomizeWeights, double dropoutRate, HashSet<Integer> dropoutNodes,
+            String wgtInit) {
         final BasicFloatNetwork network = new BasicFloatNetwork();
 
         network.addLayer(new BasicLayer(new ActivationLinear(), true, in));
@@ -284,7 +286,7 @@ public final class DTrainUtils {
 
         NeuralStructure structure = network.getStructure();
         if(network.getStructure() instanceof FloatNeuralStructure) {
-            ((FloatNeuralStructure) structure).finalizeStruct();
+            ((FloatNeuralStructure) structure).finalizeStruct(dropoutNodes);
         } else {
             structure.finalizeStructure();
         }

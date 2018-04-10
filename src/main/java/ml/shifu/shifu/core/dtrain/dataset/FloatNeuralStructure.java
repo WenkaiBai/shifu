@@ -15,6 +15,8 @@
  */
 package ml.shifu.shifu.core.dtrain.dataset;
 
+import java.util.HashSet;
+
 import org.encog.engine.network.activation.ActivationLinear;
 import org.encog.neural.NeuralNetworkError;
 import org.encog.neural.flat.FlatLayer;
@@ -26,7 +28,7 @@ import org.encog.neural.networks.structure.NeuralStructure;
  * Extend {@link NeuralStructure} to set {@link FloatFlatNetwork}.
  * 
  * <p>
- * {@link #finalizeStruct()} is used to replace {@link #finalizeStructure()} as {@link #finalizeStructure()} is set to
+ * finalizeStruct(HashSet) is used to replace {@link #finalizeStructure()} as {@link #finalizeStructure()} is set to
  * final and cannot be override.
  */
 public class FloatNeuralStructure extends NeuralStructure {
@@ -36,12 +38,13 @@ public class FloatNeuralStructure extends NeuralStructure {
     public FloatNeuralStructure(BasicNetwork network) {
         super(network);
     }
-
+    
     /**
      * Build the synapse and layer structure. This method should be called afteryou are done adding layers to a network,
      * or change the network's logic property.
+     * @param dropoutNodes drop out node index
      */
-    public void finalizeStruct() {
+    public void finalizeStruct(HashSet<Integer> dropoutNodes) {
         if(this.getLayers().size() < 2) {
             throw new NeuralNetworkError("There must be at least two layers before the structure is finalized.");
         }
@@ -57,7 +60,7 @@ public class FloatNeuralStructure extends NeuralStructure {
             flatLayers[i] = layer;
         }
 
-        this.setFlat(new FloatFlatNetwork(flatLayers, true));
+        this.setFlat(new FloatFlatNetwork(flatLayers, dropoutNodes, true));
 
         finalizeLimit();
         this.getLayers().clear();

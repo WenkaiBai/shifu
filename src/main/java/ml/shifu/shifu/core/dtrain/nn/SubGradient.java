@@ -16,7 +16,7 @@
 package ml.shifu.shifu.core.dtrain.nn;
 
 import java.util.Arrays;
-import java.util.Random;
+import java.util.HashSet;
 import java.util.concurrent.Callable;
 
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatMLDataPair;
@@ -45,14 +45,19 @@ public class SubGradient implements Callable<double[]> {
     private FloatFlatNetwork network;
 
     /**
+     * the output from entire network
+     */
+    private double[] entireNetworkActual;
+    
+    /**
+     * the output from dropout network
+     */
+    private double[] dropoutNetworkActual;
+    
+    /**
      * The error calculation method.
      */
     private ErrorCalculation errorCalculation = new SquaredErrorCalculation();
-
-    /**
-     * The actual values from the neural network.
-     */
-    private double[] actual;
 
     /**
      * The deltas for each layer.
@@ -152,16 +157,6 @@ public class SubGradient implements Callable<double[]> {
     private double[] doubleIdeal;
 
     /**
-     * The dropout rate for each layer.
-     */
-    private double[] layerDropoutRates;
-
-    /**
-     * Used to generate randomness for dropout
-     */
-    protected Random dropoutRandomSource;
-
-    /**
      * Current iteration
      */
     private int currentIteration;
@@ -170,10 +165,10 @@ public class SubGradient implements Callable<double[]> {
      * If miniBatchRate set to 0.1d, {@link #batchs} is 10. It will run 10x iterations for one epochs.
      */
     private int batchs = 1;
-
+    
     public SubGradient(final FloatFlatNetwork theNetwork, final FloatMLDataSet theTraining, long trainLow,
             long trainHigh, final FloatMLDataSet theTesting, long testLow, long testHigh, final double[] flatSpot,
-            boolean isCrossOver, ParallelGradient owner, Random dropoutRandomSource, int batchs, int currentInteration) {
+            boolean isCrossOver, ParallelGradient owner, int batchs, int currentInteration) {
         this.network = theNetwork;
         this.training = theTraining;
         this.trainLow = trainLow;
@@ -185,8 +180,6 @@ public class SubGradient implements Callable<double[]> {
         this.flatSpot = flatSpot;
         this.owner = owner;
         this.errorFunction = this.owner.createEFInstance();
-        this.layerDropoutRates = theNetwork.getLayerDropoutRates();
-        this.dropoutRandomSource = dropoutRandomSource;
         this.initNetworkParams();
         this.errorCalculation = this.owner.createECInstance();
         this.batchs = batchs;
@@ -196,7 +189,6 @@ public class SubGradient implements Callable<double[]> {
     private void initNetworkParams() {
         this.layerDelta = new double[this.network.getLayerOutput().length];
         this.gradients = new double[this.network.getWeights().length];
-        this.actual = new double[this.network.getOutputCount()];
 
         this.weights = this.network.getWeights();
         this.layerIndex = this.network.getLayerIndex();
@@ -206,6 +198,9 @@ public class SubGradient implements Callable<double[]> {
         this.layerSums = this.network.getLayerSums();
         this.layerFeedCounts = this.network.getLayerFeedCounts();
 
+        this.entireNetworkActual = new double[this.network.getOutputCount()];
+        this.dropoutNetworkActual = new double[this.network.getOutputCount()];
+        
         this.pair = BasicFloatMLDataPair.createPair(this.network.getInputCount(), getNetwork().getOutputCount());
     }
 
@@ -220,8 +215,10 @@ public class SubGradient implements Callable<double[]> {
      *            The significance.
      */
     private void process(final float[] input, final float[] ideal, double s) {
-        ((FloatFlatNetwork) this.getNetwork()).compute(input, this.actual);
+    	FloatFlatNetwork currentFlatNetwork = (FloatFlatNetwork) this.getNetwork();
 
+        currentFlatNetwork.compute(input, this.entireNetworkActual);
+        
         // have to copy float ideal array to double array, since ideal array is small, it's ok to copy an array
         if(doubleIdeal == null) {
             doubleIdeal = new double[ideal.length];
@@ -229,17 +226,30 @@ public class SubGradient implements Callable<double[]> {
         for(int i = 0; i < doubleIdeal.length; i++) {
             doubleIdeal[i] = ideal[i];
         }
+        // this is for log printing
+        this.errorCalculation.updateError(this.entireNetworkActual, doubleIdeal, s);
+        
+        // the actual output which is used to calculate gradient
+        double[] actual = null;
+        if (currentFlatNetwork.isDropoutEnabled()) {
+            LOG.info("CurrentFlatNetwork is dropout enabled");
+        	currentFlatNetwork.computeWithDropout(input, this.dropoutNetworkActual);
+        	actual = this.dropoutNetworkActual;
+        } else {
+        	LOG.info("CurrentFlatNetwork is dropout disabled");
+        	actual = this.entireNetworkActual;
+        }
 
-        this.errorCalculation.updateError(this.actual, doubleIdeal, s);
         this.errorFunction.calculateError(doubleIdeal, actual, this.getLayerDelta());
 
         // TODO this logic should be moved the ErrorFunction
         if(this.errorFunction instanceof LogErrorFunction) {
-            for(int i = 0; i < this.actual.length; i++) {
+            for(int i = 0; i < actual.length; i++) {
                 this.getLayerDelta()[i] *= s;
             }
         } else {
-            for(int i = 0; i < this.actual.length; i++) {
+            for(int i = 0; i < actual.length; i++) {
+            	// here is ok to use layeroutput and layersum because output layer does not apply dropout, so its output is original
                 this.getLayerDelta()[i] = ((this.getNetwork().getActivationFunctions()[0].derivativeFunction(
                         this.layerSums[i], this.layerOutput[i]) + this.flatSpot[0])) * (this.getLayerDelta()[i] * s);
             }
@@ -247,8 +257,16 @@ public class SubGradient implements Callable<double[]> {
 
         int beginTraining = this.getNetwork().getBeginTraining();
 
-        for(int i = beginTraining; i < this.getNetwork().getEndTraining(); i++) {
-            processLevel(i);
+        if (currentFlatNetwork.isDropoutEnabled()) {
+            LOG.info("CurrentFlatNetwork is dropout enabled");
+        	for(int i = beginTraining; i < this.getNetwork().getEndTraining(); i++) {
+            	processLevelWithDropout(i);
+            }
+        } else {
+        	LOG.info("CurrentFlatNetwork is dropout disabled");
+            for(int i = beginTraining; i < this.getNetwork().getEndTraining(); i++) {
+            	processLevel(i);
+            }
         }
     }
 
@@ -263,10 +281,6 @@ public class SubGradient implements Callable<double[]> {
         final int toLayerIndex = this.layerIndex[currentLevel];
         final int fromLayerSize = this.layerCounts[currentLevel + 1];
         final int toLayerSize = this.layerFeedCounts[currentLevel];
-        double dropoutRate = 0;
-        if(this.layerDropoutRates.length > currentLevel && this.layerDropoutRates[currentLevel] != 0) {
-            dropoutRate = this.layerDropoutRates[currentLevel];
-        }
 
         final int index = this.weightIndex[currentLevel];
         final ActivationFunction activation = this.getNetwork().getActivationFunctions()[currentLevel + 1];
@@ -278,7 +292,7 @@ public class SubGradient implements Callable<double[]> {
             final double output = this.layerOutput[yi];
             double sum = 0;
             int wi = index + y;
-            if(this.owner.isELM() || dropoutRate == 0d || dropoutRandomSource.nextDouble() > dropoutRate) {
+            if(this.owner.isELM()) {
                 int xi = toLayerIndex;
                 for(int x = 0; x < toLayerSize; x++) {
                     // if ELM and current Level is endTrainingIndex-1, from firstHidden to input, gradients set to 0 to
@@ -294,6 +308,60 @@ public class SubGradient implements Callable<double[]> {
                 }
                 this.getLayerDelta()[yi] = sum
                         * (activation.derivativeFunction(this.layerSums[yi], this.layerOutput[yi]) + currentFlatSpot);
+            } else {
+                this.getLayerDelta()[yi] = 0;
+            }
+            yi++;
+        }
+    }
+    
+    /**
+     * Process one level with dropout mask output in between.
+     * 
+     * @param currentLevel
+     *            The current level.
+     */
+    private void processLevelWithDropout(final int currentLevel) {
+        final int fromLayerIndex = this.layerIndex[currentLevel + 1];
+        final int toLayerIndex = this.layerIndex[currentLevel];
+        final int fromLayerSize = this.layerCounts[currentLevel + 1];
+        final int toLayerSize = this.layerFeedCounts[currentLevel];
+
+        final int index = this.weightIndex[currentLevel];
+        final ActivationFunction activation = this.getNetwork().getActivationFunctions()[currentLevel + 1];
+        final double currentFlatSpot = this.flatSpot[currentLevel + 1];
+
+        FloatFlatNetwork ffn = (FloatFlatNetwork) this.getNetwork();
+        
+        // handle weights
+        int yi = fromLayerIndex;
+        for(int y = 0; y < fromLayerSize; y++) {
+            double sum = 0;
+            int wi = index + y;
+            if(this.owner.isELM()) {
+                int xi = toLayerIndex;
+                for(int x = 0; x < toLayerSize; x++) {
+                    // if ELM and current Level is endTrainingIndex-1, from firstHidden to input, gradients set to 0 to
+                    // skip update weights on input to first layer
+                    if(this.owner.isELM() && currentLevel == (this.getNetwork().getEndTraining() - 1)) {
+                        this.gradients[wi] = 0d;
+                    } else {
+                        //this.gradients[wi] += output * this.getLayerDelta()[xi];
+                        this.gradients[wi] += ffn.getMaskedLayerOutput()[yi] * this.getLayerDelta()[xi];
+                    }
+                    sum += this.weights[wi] * this.getLayerDelta()[xi];
+                    wi += fromLayerSize;
+                    xi++;
+                }
+                
+                if (ffn.isDropoutEnabled(fromLayerIndex)) {
+                    if (ffn.getDropoutNodes().contains(yi)) {
+                    	this.getLayerDelta()[yi] = 0;
+                    } else {
+                    	this.getLayerDelta()[yi] = sum / (1d - ffn.getLayerDropoutRate(fromLayerIndex))
+                                * (activation.derivativeFunction(this.layerSums[yi], this.layerOutput[yi]) + currentFlatSpot);
+                    }
+                }
             } else {
                 this.getLayerDelta()[yi] = 0;
             }

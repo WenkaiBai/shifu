@@ -16,6 +16,7 @@
 package ml.shifu.shifu.core.dtrain.nn;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletionService;
@@ -109,7 +110,7 @@ public class ParallelGradient {
      * If miniBatchRate set to 0.1d, {@link #batchs} is 10. It will run 10x iterations for one epochs.
      */
     private int batchs = 1;
-
+    
     public ParallelGradient(final FloatFlatNetwork theNetwork, final FloatMLDataSet theTraining,
             final FloatMLDataSet theTesting, final double[] flatSpot, ErrorFunction ef, boolean isCrossOver,
             int threadCount, boolean isELM, String lossStr, int batchs) {
@@ -174,12 +175,11 @@ public class ParallelGradient {
     public double[] computeGradients(int currentIteration) {
         CompletionService<double[]> completionService = new ExecutorCompletionService<double[]>(this.threadPool);
         this.subGradients = new SubGradient[this.threadCount];
-        Random dropoutRandom = new Random();
         for(int i = 0; i < this.threadCount; i++) {
             if(this.subGradients[i] == null) {
                 this.subGradients[i] = new SubGradient(this.network.clone(), this.training, this.trainLows[i],
                         this.trainHighs[i], this.testing, this.testLows[i], this.testHighs[i], this.flatSpot,
-                        this.isCrossOver, this, dropoutRandom, this.batchs, currentIteration);
+                        this.isCrossOver, this, this.batchs, currentIteration);
             } else {
                 this.subGradients[i].setNetwork(this.network.clone());
             }

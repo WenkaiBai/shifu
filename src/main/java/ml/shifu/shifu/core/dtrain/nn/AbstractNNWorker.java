@@ -514,8 +514,10 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
 
         // initialize gradients if null
         double[] weights = context.getLastMasterResult().getWeights();
+        // dropout node index
+        HashSet<Integer> dropoutNodes = context.getLastMasterResult().getDropoutNodes();
         if(gradient == null) {
-            initGradient(this.trainingData, this.validationData, weights, this.isCrossOver);
+            initGradient(this.trainingData, this.validationData, weights, this.isCrossOver, dropoutNodes);
             // register call back for shut down thread pool.
             context.addCompletionCallBack(new WorkerCompletionCallBack<NNParams, NNParams>() {
                 @Override
@@ -565,13 +567,14 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
     }
 
     @SuppressWarnings("unchecked")
-    private void initGradient(FloatMLDataSet training, FloatMLDataSet testing, double[] weights, boolean isCrossOver) {
+    private void initGradient(FloatMLDataSet training, FloatMLDataSet testing, double[] weights, boolean isCrossOver,
+    		HashSet<Integer> dropoutNodes) {
         int numLayers = (Integer) this.validParams.get(CommonConstants.NUM_HIDDEN_LAYERS);
         List<String> actFunc = (List<String>) this.validParams.get(CommonConstants.ACTIVATION_FUNC);
         List<Integer> hiddenNodeList = (List<Integer>) this.validParams.get(CommonConstants.NUM_HIDDEN_NODES);
 
         BasicNetwork network = DTrainUtils.generateNetwork(this.featureInputsCnt, this.outputNodeCount, numLayers,
-                actFunc, hiddenNodeList, false, this.dropoutRate, this.wgtInit);
+                actFunc, hiddenNodeList, false, this.dropoutRate, dropoutNodes, this.wgtInit);
         // use the weights from master
         network.getFlat().setWeights(weights);
 
@@ -579,6 +582,7 @@ public abstract class AbstractNNWorker<VALUE extends Writable> extends
         // copy Propagation from encog, fix flat spot problem
         double[] flatSpot = new double[flat.getActivationFunctions().length];
         for(int i = 0; i < flat.getActivationFunctions().length; i++) {
+        	// QA: why change flat spot?
             flatSpot[i] = flat.getActivationFunctions()[i] instanceof ActivationSigmoid ? 0.1 : 0.0;
 
         }

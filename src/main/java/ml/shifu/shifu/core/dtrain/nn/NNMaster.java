@@ -31,6 +31,8 @@ import ml.shifu.shifu.core.dtrain.DTrainUtils;
 import ml.shifu.shifu.core.dtrain.RegulationLevel;
 import ml.shifu.shifu.core.dtrain.Weight;
 import ml.shifu.shifu.core.dtrain.dataset.BasicFloatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatFlatNetwork;
+import ml.shifu.shifu.core.dtrain.dataset.FloatNeuralStructure;
 import ml.shifu.shifu.core.dtrain.gs.GridSearch;
 import ml.shifu.shifu.fs.ShifuFileUtils;
 import ml.shifu.shifu.util.CommonUtils;
@@ -38,6 +40,7 @@ import ml.shifu.shifu.util.CommonUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.fs.Path;
 import org.encog.ml.BasicML;
+import org.encog.neural.flat.FlatNetwork;
 import org.encog.neural.networks.BasicNetwork;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -174,6 +177,11 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
      */
     private double adamBeta2 = 0.999d;
 
+    /**
+     * FlatNetwork structure read from model config
+     */
+	private FloatFlatNetwork flatNetwork;
+	
     @Override
     public NNParams doCompute(MasterContext<NNParams, NNParams> context) {
         if(context.isFirstIteration()) {
@@ -232,7 +240,7 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
             this.learningRate = this.rawLearningRate;
             this.weightCalculator = new Weight(this.globalNNParams.getGradients().length,
                     this.globalNNParams.getTrainSize(), learningRate, propagation, this.regularizedConstant,
-                    RegulationLevel.to(this.validParams.get(CommonConstants.REG_LEVEL_KEY)), this.dropoutRate,
+                    RegulationLevel.to(this.validParams.get(CommonConstants.REG_LEVEL_KEY)),
                     this.propagation, this.momentum, this.learningDecay, this.adamBeta1, this.adamBeta2);
         } else {
             this.learningRate = this.learningRate * (1.0d - this.learningDecay);
@@ -286,7 +294,9 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
         params.setGradients(new double[0]);
         params.setWeights(weights);
         LOG.debug("master result {} in iteration {}", params, context.getCurrentIteration());
-
+        // generate dropout node list
+        params.setDropoutNodes(dropoutNodes());
+        
         // Convergence judging part
         double avgErr = (currentTrainError + currentTestError) / 2;
 
@@ -352,8 +362,10 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
         List<Integer> hiddenNodeList = (List<Integer>) validParams.get(CommonConstants.NUM_HIDDEN_NODES);
 
         BasicNetwork network = DTrainUtils.generateNetwork(featureInputsCnt, outputNodeCount, numLayers, actFunc,
-                hiddenNodeList, true, this.dropoutRate, this.wgtInit);
+                hiddenNodeList, true, this.dropoutRate, null, this.wgtInit);
 
+        this.flatNetwork = (FloatFlatNetwork) network.getFlat();
+                
         params.setTrainError(0);
         params.setTestError(0);
         // prevent null point
@@ -478,6 +490,33 @@ public class NNMaster extends AbstractMasterComputable<NNParams, NNParams> {
                 this.globalNNParams.setWeights(params.getWeights());
             }
         }
+
     }
 
+    private HashSet<Integer> dropoutNodes() {
+    	Random random = new Random(System.currentTimeMillis());
+    	
+    	HashSet<Integer> droppedNodeIndices = new HashSet<Integer>();
+
+        // from input to last hidden layer. (exclude output layer)
+        for(int i = this.flatNetwork.getLayerIndex().length - 1; i > 0; i--) {
+        	int beginNeuronIndex = this.flatNetwork.getLayerIndex()[i];
+        	int neuronCount = this.flatNetwork.getLayerCounts()[i];
+        	
+            // from first neuron to last neuron in current layer
+        	for (int j = 0; j < neuronCount; j++) {
+        		if(random.nextDouble() < this.flatNetwork.getLayerDropoutRate(i)) {
+        			// drop this node by adding it into list and will passing this list to workers
+        			droppedNodeIndices.add(beginNeuronIndex + j);
+        		}
+        	}
+        }
+        
+        LOG.info("layerIndex:{}; layerCounts:{}; dropoutNodes:{}", 
+        		Arrays.toString(this.flatNetwork.getLayerIndex()),
+        		Arrays.toString(this.flatNetwork.getLayerCounts()),
+        		Arrays.toString(droppedNodeIndices.toArray(new Integer[droppedNodeIndices.size()])));
+        return droppedNodeIndices;
+    }
+    
 }

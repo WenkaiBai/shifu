@@ -19,6 +19,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashSet;
 
 import ml.shifu.guagua.io.Combinable;
 import ml.shifu.guagua.io.HaltBytable;
@@ -45,7 +46,7 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
      * Gradients for NN model
      */
     private double[] gradients;
-
+    
     /**
      * Current test error which can be sent to master
      */
@@ -71,6 +72,11 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
      */
     private int wrCount = 1;
 
+    /**
+     * drop out node list, will generate new list in master every epoch
+     */
+    private HashSet<Integer> dropoutNodes = null;
+    
     public double[] getWeights() {
         return weights;
     }
@@ -239,12 +245,26 @@ public class NNParams extends HaltBytable implements Combinable<NNParams> {
     public void setWrCount(int wrCount) {
         this.wrCount = wrCount;
     }
+    
+    /**
+     * @return dropout node 
+     */
+	public HashSet<Integer> getDropoutNodes() {
+		return dropoutNodes;
+	}
 
+	/**
+	 * drop out nodes
+	 * @param dropoutNodes dropout nodes
+	 */
+	public void setDropoutNodes(HashSet<Integer> dropoutNodes) {
+		this.dropoutNodes = dropoutNodes;
+	}
+    
     @Override
     public String toString() {
         return String.format("NNParams [testError=%s, trainError=%s, trainSize=%s, wrCount=%s, gSize=%s]",
                 this.testError, this.trainError, this.trainSize, this.getWrCount(),
                 this.gradients != null ? this.gradients.length : 0);
     }
-
 }
